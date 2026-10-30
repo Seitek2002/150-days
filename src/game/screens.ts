@@ -13,7 +13,7 @@ import { t, tf, type StringKey } from '../i18n.ts';
 import { drawLabel, wrapText } from './fonts.ts';
 import { isBook } from './books.ts';
 import { canWield, type Hero, type WeaponItem } from './hero.ts';
-import type { Inventory, Stack } from './inventory.ts';
+import { AMMO_WEIGHT, type Inventory, type Stack } from './inventory.ts';
 
 const WINDOW = { x: 80, y: 0 };
 const SLOT = { w: 64, h: 48, pad: 4 };
@@ -550,7 +550,9 @@ export class ItemScreens {
     const lines: { text: string; dim?: boolean }[] = [{ text: this.data.itemName(proto) }, { text: '' }];
     for (const line of wrapText(this.font, this.data.itemDescription(proto), width)) lines.push({ text: line, dim: true });
     // Weight for every item, "Weight: 0" too (the client, 2026-10-29: keys and bottle caps had no such line, it looked like they had no weight).
-    lines.push({ text: '' }, { text: tf('statWeight', { n: Math.max(0, proto.weight) }), dim: true });
+    // Ammo: the weight of a whole box, lightened like all ammo (inventory.ts -> AMMO_WEIGHT).
+    const weight = Math.max(0, proto.weight) * (proto.type === ITEM_TYPE.ammo ? AMMO_WEIGHT : 1);
+    lines.push({ text: '' }, { text: tf('statWeight', { n: weight }), dim: true });
     return lines;
   }
 
@@ -573,7 +575,7 @@ export class ItemScreens {
       lines.push({ text: tf('statSkill', { skill: hero.gunSkill }) });
       lines.push({ text: tf('statXp', { xp: hero.experience }) });
       // Item weight and how much can be carried, as in the original's inventory window; more means overloaded (hero.ts → OVERLOAD).
-      lines.push({ text: tf(hero.overloaded ? 'statLoadOver' : 'statLoad', { load: hero.load, max: hero.carryWeight }) });
+      lines.push({ text: tf(hero.overloaded ? 'statLoadOver' : 'statLoad', { load: Math.round(hero.load), max: hero.carryWeight }) });
       lines.push({ text: '' });
       const held = hero.activeItem;
       lines.push({ text: tf('statHand', { n: hero.activeHand + 1, name: held ? this.data.itemName(held) : t('fists') }) });

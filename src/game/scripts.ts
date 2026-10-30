@@ -13,7 +13,7 @@ import { callGameFunction, procedureNumber, type DialogueUI, type ScriptContext,
 import { IntProgram } from '../script/int.ts';
 import { disassemble } from '../script/disasm.ts';
 import { externalVars, ScriptError, ScriptVM } from '../script/vm.ts';
-import type { Inventory } from './inventory.ts';
+import { stackWeight, type Inventory } from './inventory.ts';
 import { AGE_DEFAULT, derivedStats, levelForExperience, perkRank, newCharacter, SKILL, SKILL_MAX, skillBase, skillLevel, specialLevel, SPECIAL_NAMES, type Character, type Special } from './character.ts';
 import { angleFromRotation, hexAt, hexCenter, onOriginalScreen, ROTATION_COUNT, rotationFromAngle, tileDist, tileInDirection } from './hex.ts';
 import { wallAt } from '../engine/level.ts';
@@ -1640,7 +1640,7 @@ export class ScriptRuntime {
           case 666:
             return (o as GameObject).creature?.hidden ? 0 : 1;
           case 669:
-            return (inventoryOf(o)?.items ?? []).reduce((sum, stack) => sum + stack.proto.weight * stack.count, 0);
+            return Math.round((inventoryOf(o)?.items ?? []).reduce((sum, stack) => sum + stackWeight(stack.proto, stack.count), 0));
           default:
             return 0;
         }

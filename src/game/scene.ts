@@ -15,12 +15,12 @@ import { formatDecimal, t, tf, type StringKey } from '../i18n.ts';
 import { parseLevelDef, type Destination, type Entry, type LevelDef, type LevelPanel, type ParsedLevel } from '../world/defs.ts';
 import { chanceToHit, meleeDodge, strengthPenalty, strike, type Fighter } from './fighter.ts';
 import { findFlank } from './ai/cover.ts';
-import { AIM_PARTS, AIMED, aimedChance, aimedZone, aimSpread, BEAST_AIM_PARTS, bodyZone, CRIPPLE, farAim, isGrenade, isThrownWeapon, JINX, MELEE_AIM, motionSpread, reactionDelay, spreadPoint, ZONE, type AimPart } from './combat.ts';
+import { AIM_PARTS, AIMED, aimedChance, aimedZone, aimSpread, BEAST_AIM_PARTS, bodyZone, CRIPPLE, farAim, isGrenade, isThrownWeapon, JINX, MELEE_AIM, motionSpread, reactionDelay, shotHits, spreadPoint, TELEGRAPH, ZONE, type AimPart } from './combat.ts';
 import { lightOf, NOISE, stealthFactor } from './ai/senses.ts';
 import { PERK, perkRank, SKILL, TRAIT } from './character.ts';
 import { Creature, lineOfSight, type BarkKey } from './creature.ts';
 import type { Hero } from './hero.ts';
-import { doorSfx, SFX, weaponSfx, type CritterKind, type Resources } from './resources.ts';
+import { clickSfx, doorSfx, SFX, weaponSfx, type CritterKind, type Resources } from './resources.ts';
 import { barkClassOf, barkText } from './barks.ts';
 import { AP_COST, FAST_SHOT, JUMP_AP, meleeReach, OVERLOAD } from './hero.ts';
 import { emptyMapState, type CreatedObject, type MapState } from './save.ts';
@@ -2937,7 +2937,8 @@ export class Scene {
     player.canJump = !hero.crippledLeg && !heavy && hero.canJump();
     player.speedScale = (hero.crippledLeg ? CRIPPLE.legSpeed : 1) * (heavy ? OVERLOAD.speed : 1);
     const jumps = player.jumps;
-    player.update(dt, level, present.filter((c) => c.hostile && !this.allies.has(c)));
+    // An enemy frozen before its attack (TELEGRAPH) does not block the way: the hero can slip through it.
+    player.update(dt, level, present.filter((c) => c.hostile && !this.allies.has(c) && !c.windingUp));
     if (player.jumps > jumps && hero.inCombat) hero.ap = Math.max(0, hero.ap - JUMP_AP);
     if (this.hitFrom) {
       this.hitFrom.time -= dt;
@@ -2963,6 +2964,8 @@ export class Scene {
       alive: hero.alive,
       light: lightOf(level),
       stealth: stealthFactor(player.sneaking, hero.fighter.skills[SKILL.sneak] ?? 0),
+      vx: player.vx,
+      vy: player.vy,
     };
     // "Ghost" (perk, as in the original's description): in darkness Sneak is 20% higher.
     if (target.light < GHOST.dark && perkRank(hero.character, PERK.ghost)) target.stealth = stealthFactor(player.sneaking, (hero.fighter.skills[SKILL.sneak] ?? 0) + GHOST.sneak);
@@ -2993,6 +2996,7 @@ export class Scene {
       }
       // An enemy hits whoever is closer: the hero or the hero's companion (if the companion is visible).
       const ally = c.hostile && c.alive ? this.nearestAlly(c, Math.hypot(c.x - player.x, c.y - player.y)) : null;
+      c.windup = TELEGRAPH.windup;
       c.update(
         dt,
         level,
@@ -3003,6 +3007,8 @@ export class Scene {
         (cr) => this.host.say(tf('msgNpcHeal', { name: cr.stats.name })),
         (cr, x, y, grenade) => this.enemyGrenade(cr, x, y, grenade),
       );
+      // The warning before its attack (client, 2026-10-30): the weapon's dry-fire click as it freezes in the attack pose.
+      if (c.takeWindup()) this.host.res.sound.playAt(clickSfx(c.weapon), c.x, c.y, player);
       this.keepPlace(c, hero.inCombat);
       // Noticed the hero: shouts to its allies, and they run to where the hero is.
       if (c.takeNoticed()) this.alertAllies(c, player);
@@ -3696,7 +3702,7 @@ export class Scene {
     // The hero's "Jinxed": enemy weapons jam too.
     if (hero.character.traits.includes(TRAIT.jinxed) && Math.random() < JINX.jam) {
       c.jam(JINX.clear);
-      res.sound.playAt(weaponSfx('O', '0', 1), c.x, c.y, player);
+      res.sound.playAt(clickSfx(c.weapon), c.x, c.y, player);
       this.float(c, t('floatJammed'), BARK_COLOR);
       return;
     }
@@ -3706,7 +3712,11 @@ export class Scene {
     this.noise(c.x, c.y, NOISE.shot, true, c);
     const dist = Math.hypot(c.x - player.x, c.y - player.y);
     const attacker = this.fighterOf(c);
-    if (Math.random() * 100 < chanceToHit(attacker, w.skill, hero.fighter, dist, w.ammo?.acModifier ?? 0)) {
+    // Where the bullet goes is decided by the hero's position (combat.ts -> shotHits): a hero who stayed on the line of fire is hit with
+    // the original's chance; one who stepped aside during the freeze, ducked behind a wall or walked through the shooter is not.
+    const chance = chanceToHit(attacker, w.skill, hero.fighter, dist, w.ammo?.acModifier ?? 0) / 100;
+    const aim = c.aimAt ?? player;
+    if (lineOfSight(this.level, c.x, c.y, player.x, player.y) && shotHits(c.x, c.y, aim.x, aim.y, player.x, player.y, chance)) {
       const hit = strike(attacker, w.damage, hero.fighter, Math.random, w.ammo);
       const dmg = Math.max(1, hit.damage);
       const limb = hero.takeDamage(dmg, { critical: hit.critical });

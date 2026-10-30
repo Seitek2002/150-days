@@ -1,5 +1,17 @@
 // A list of items: the hero's, a corpse's, later in boxes. Identical items are stacked.
-import type { ItemProto } from '../formats/pro.ts';
+import { ITEM_TYPE, type ItemProto } from '../formats/pro.ts';
+
+/** Ammo is half as heavy as in the original (client, 2026-10-30: ammo weighed too much and kept the hero from fighting more often). */
+export const AMMO_WEIGHT = 0.5;
+
+/**
+ * Weight of count items (pounds). An ammo prototype weighs a whole box (quantity rounds) while our stacks count rounds, so one round
+ * weighs box / quantity (before 2026-10-30 every round weighed as much as a whole box), then × AMMO_WEIGHT.
+ */
+export function stackWeight(proto: ItemProto, count: number): number {
+  if (proto.type !== ITEM_TYPE.ammo) return proto.weight * count;
+  return (proto.weight * AMMO_WEIGHT * count) / Math.max(1, proto.ammo?.quantity ?? 1);
+}
 
 export interface Stack {
   proto: ItemProto;

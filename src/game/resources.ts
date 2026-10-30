@@ -34,6 +34,16 @@ export function weaponSfx(action: 'A' | 'H' | 'O' | 'R', code: string, variant: 
   return `W${action}${code}1${action === 'H' ? material : 'X'}XX${variant}`;
 }
 
+/**
+ * A creature's dry-fire click (WO<code>): the warning before its attack (combat.ts -> TELEGRAPH) and a jammed shot. Firearms have their
+ * own click (the code is the third letter of the shot file, WA<code>...); melee weapons and beasts have none in the original, so they
+ * click like the 10mm pistol (A).
+ */
+export function clickSfx(weapon: { melee: boolean; sound: string } | null | undefined): string {
+  const sound = weapon && !weapon.melee ? weapon.sound : '';
+  return weaponSfx('O', /^WA[A-Z]/.test(sound) ? sound[2]! : 'A', 1);
+}
+
 /** Door sound: S + O (open) / C (close) / L (locked) + DOORS + door letter. */
 export function doorSfx(action: 'O' | 'C' | 'L', letter: string): string {
   // Our own door from the block library with its own sounds (b:<name>): open and close are its files, "locked" is the shared one.
@@ -118,6 +128,7 @@ export class Resources {
       ...Object.values(SFX),
       ...[1, 2].flatMap((v) => [weaponSfx('A', code, v), ...['F', 'S', 'M'].map((m) => weaponSfx('H', code, v, m))]),
       weaponSfx('O', code, 1),
+      weaponSfx('O', 'A', 1),
       weaponSfx('R', code, 1),
     ]);
     return res;
@@ -292,7 +303,7 @@ export class Resources {
       const skill = weaponSkill(fighter, gun);
       const damage = { min: gun.minDamage, max: gun.maxDamage + (melee ? fighter.meleeDamage : 0) };
       const sound = weaponSfx('A', gun.soundCode ?? '0', 1);
-      void this.sound.preload([sound]);
+      void this.sound.preload([sound, clickSfx({ melee, sound })]);
       // Modifiers of the barrel's "native" ammo (as for the hero: armor piercing pierces armor, hollow point hurts more).
       const ammo = melee || thrown || gun.ammoPid < 0 ? undefined : (await this.data.item(gun.ammoPid).catch(() => null))?.ammo;
       weapon = {

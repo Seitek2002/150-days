@@ -8,7 +8,7 @@ import { derivedStats, newCharacter, PERK, perkRank, SKILL, TRAIT, type Characte
 import { gainExperience } from './perks.ts';
 import { AIMED, ATTACK_SPEED, attackDelay, CRIPPLE, drawFactor, JINX, cripples, isMeleeWeapon, isThrownWeapon, KNOCKDOWN, KNOCKDOWN_TIME, knocksDown, RECOIL, recoilHeat, STAGGER, staggers } from './combat.ts';
 import { agilityTime, characterFighter, drugHeal, RELOAD_SECONDS, SKILL_SECONDS, weaponSkill, type Fighter } from './fighter.ts';
-import { Inventory } from './inventory.ts';
+import { Inventory, stackWeight } from './inventory.ts';
 
 /** The default character while there's no creation screen: all stats 5, the tag skill is "Small Guns". */
 export const defaultHeroCharacter = (): Character => ({ ...newCharacter(), tagged: [SKILL.smallGuns] });
@@ -639,7 +639,7 @@ export class Hero {
 
   /** How much all the hero's items weigh (pounds, as in the original: items in hand and worn armor are also in the inventory). */
   get load(): number {
-    return this.inventory.items.reduce((sum, s) => sum + s.proto.weight * s.count, 0);
+    return this.inventory.items.reduce((sum, s) => sum + stackWeight(s.proto, s.count), 0);
   }
 
   /** How much he can carry (character window, "Carry Weight"). */

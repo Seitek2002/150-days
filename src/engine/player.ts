@@ -246,12 +246,16 @@ export interface Obstacle {
 /** Distance closer than which the player and a critter don't come together. */
 const PERSONAL_SPACE = 0.45;
 
-/** A step is blocked by a critter if it gets closer than allowed (moving away is fine). */
+/**
+ * A step is blocked by a critter if it gets closer than allowed (moving away is fine). Already deep inside a critter (slipped into it
+ * while it was frozen before an attack, scene -> TELEGRAPH, and the freeze ended) — not blocked either: the hero finishes passing through.
+ */
 function bumps(obstacles: readonly Obstacle[], x0: number, y0: number, x: number, y: number): boolean {
   return obstacles.some((o) => {
     if (!o.alive) return false;
+    const before = Math.hypot(o.x - x0, o.y - y0);
     const after = Math.hypot(o.x - x, o.y - y);
-    return after < PERSONAL_SPACE && after < Math.hypot(o.x - x0, o.y - y0);
+    return after < PERSONAL_SPACE && after < before && before >= PERSONAL_SPACE / 2;
   });
 }
 

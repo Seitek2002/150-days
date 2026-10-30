@@ -165,6 +165,41 @@ export function motionSpread(speed: number, airborne: boolean, sneaking: boolean
 }
 
 /**
+ * Telegraph before an enemy attack (client, 2026-10-30: combat must depend on the player's skill): before a shot or a blow
+ * the creature freezes in its attack pose for windup seconds — the same for every creature for now (per-creature timings come later,
+ * by feel). During the freeze the hero can step out of the line of fire or out of reach, and can even walk through the creature.
+ * arc — the cosine of the half-angle in front of a frozen fighter that its blow still reaches (0.5 — 60° to each side).
+ */
+export const TELEGRAPH = { windup: 0.5, arc: 0.5 } as const;
+
+/** Half of the hero's width for enemy bullets (cells). */
+export const HERO_HALF_WIDTH = 0.25;
+
+/**
+ * How much of the hero's movement a shooter leads when it locks its aim (it aims where the hero will be when the freeze ends):
+ * skill 100% and above — fully, 50% — half. Running one way escapes a weak shooter; changing direction during the freeze escapes anyone.
+ */
+export const leadShare = (skill: number): number => Math.max(0, Math.min(1, skill / 100));
+
+/**
+ * Whether an enemy bullet hits the hero (client, 2026-10-30: the hit is decided by where the hero is, not by a hidden roll).
+ * The shooter fires along the line from (sx, sy) through its locked aim point (ax, ay); the bullet deviates sideways by a random amount
+ * within ±HERO_HALF_WIDTH / chance. So a hero who stood still on the aim line is hit with exactly the original's chance (chance, 0..1:
+ * skill minus armor class and the distance penalty), and a hero who stepped out of the line by more than the scatter is never hit.
+ * A target behind the shooter (walked through it) is not hit.
+ */
+export function shotHits(sx: number, sy: number, ax: number, ay: number, tx: number, ty: number, chance: number, rnd: Random = Math.random): boolean {
+  const len = Math.hypot(ax - sx, ay - sy);
+  if (len < 1e-6) return false;
+  const nx = (ax - sx) / len;
+  const ny = (ay - sy) / len;
+  if ((tx - sx) * nx + (ty - sy) * ny <= 0) return false;
+  const side = (ty - sy) * nx - (tx - sx) * ny;
+  const scatter = HERO_HALF_WIDTH / Math.max(0.01, Math.min(1, chance));
+  return Math.abs((rnd() * 2 - 1) * scatter - side) < HERO_HALF_WIDTH;
+}
+
+/**
  * Stagger from a hit — one rule for the hero and enemies (Opus decision, 2026-10-26): only a strong
  * hit (a quarter of health or more at once) or a critical one staggers, and no more often than once per STAGGER.grace seconds. Previously any
  * hit interrupted an enemy's shot — the hero, firing often, never let it shoot even once.

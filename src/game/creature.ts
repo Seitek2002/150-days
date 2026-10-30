@@ -10,7 +10,7 @@ import { findCover, findPeek, findRetreat, type Spot } from './ai/cover.ts';
 import { inFront, sightRange } from './ai/senses.ts';
 import { drugHeal, healsHp, SECONDS_PER_AP } from './fighter.ts';
 import { Inventory } from './inventory.ts';
-import { isGrenade, STAGGER, staggers, ZONE } from './combat.ts';
+import { isGrenade, leadShare, STAGGER, staggers, TELEGRAPH, ZONE } from './combat.ts';
 import type { ItemProto } from '../formats/pro.ts';
 
 export interface CreatureArt {
@@ -67,6 +67,9 @@ export interface Target {
   light?: number;
   /** How visible the target is (1 is normal, less means sneaking). */
   stealth?: number;
+  /** Speed (cells per second): a shooter leads a moving target when it locks its aim (TELEGRAPH). */
+  vx?: number;
+  vy?: number;
 }
 
 /** out: unconscious (a companion in the wasteland instead of dying): lies there, is not attacked, then gets up (wake). */
@@ -284,6 +287,16 @@ export class Creature {
   private wait = 0.5 + Math.random() * 2;
   private cooldown = 0;
   private struck = false;
+  /**
+   * Telegraph (combat.ts -> TELEGRAPH): how many seconds it freezes in the attack pose before a shot or a blow (set by the scene;
+   * 0 — no freeze), how much of the freeze is left, whether this attack has already frozen, and where it aims (locked as the freeze begins).
+   */
+  windup = 0;
+  private windLeft = 0;
+  private wound = false;
+  /** Has just frozen before an attack (the scene plays the warning click and takes the flag). */
+  private windNow = false;
+  aimAt: { x: number; y: number } | null = null;
   private aware = false;
   /** Just noticed the hero (the scene raises the alarm among allies and takes the flag). */
   private noticedNow = false;
@@ -409,6 +422,11 @@ export class Creature {
   /** Hitting up close right now (a swing or a bite), for the attack queue. */
   get striking(): boolean {
     return this.alive && this.state === 'attack' && !this.ranged;
+  }
+
+  /** Frozen before an attack (TELEGRAPH): the hero can walk through it. */
+  get windingUp(): boolean {
+    return this.state === 'attack' && this.windLeft > 0;
   }
 
   get ranged(): boolean {
@@ -572,6 +590,13 @@ export class Creature {
   /** Can go flanking: in combat, not retreating, not reloading, and has not flanked for a while. */
   get readyToFlank(): boolean {
     return this.alive && this.aware && (this.tactic === 'fight' || this.tactic === 'hide') && this.reloadLeft <= 0 && this.flankWait <= 0;
+  }
+
+  /** Froze before an attack this frame (TELEGRAPH; the flag is cleared when read). */
+  takeWindup(): boolean {
+    const w = this.windNow;
+    this.windNow = false;
+    return w;
   }
 
   /** Noticed the hero this frame (the flag is cleared when read). */
@@ -858,13 +883,31 @@ export class Creature {
       }
     }
     if (this.state === 'attack') {
-      this.facing = Math.atan2(dy, dx);
-      const frame = Math.floor(this.stateTime * this.art.attack.fps);
-      if (!this.struck && frame >= this.art.attack.actionFrame) {
+      const sheet = this.art.attack;
+      // Telegraph: freezes one frame before the action frame, locking its facing and where it aims; the hero sees the pose and can dodge.
+      const hold = Math.max(0, sheet.actionFrame - 1) / sheet.fps;
+      if (this.windLeft > 0) {
+        this.windLeft -= dt;
+        this.stateTime = hold;
+        if (this.windLeft > 0) return;
+      } else if (!this.struck && !this.wound && this.windup > 0 && this.stateTime >= hold) {
+        this.wound = true;
+        this.windNow = true;
+        this.windLeft = this.windup;
+        this.stateTime = hold;
+        const lead = this.ranged ? leadShare(this.weapon!.skill) * (this.windup + 1 / sheet.fps) : 0;
+        this.aimAt = { x: player.x + (player.vx ?? 0) * lead, y: player.y + (player.vy ?? 0) * lead };
+        this.facing = Math.atan2(this.aimAt.y - this.y, this.aimAt.x - this.x);
+        return;
+      }
+      if (!this.wound) this.facing = Math.atan2(dy, dx);
+      const frame = Math.floor(this.stateTime * sheet.fps);
+      if (!this.struck && frame >= sheet.actionFrame) {
         this.struck = true;
         if (this.ranged) {
           if (player.alive) fire(this);
-        } else if (dist < REACH + 0.3 && player.alive) {
+        } else if (dist < REACH + 0.3 && player.alive && Math.cos(Math.atan2(dy, dx) - this.facing) > TELEGRAPH.arc) {
+          // A blow reaches only in front: a hero who stepped aside or walked through it during the freeze is not hit.
           bite(this);
         }
       }
@@ -1078,6 +1121,9 @@ export class Creature {
   private setState(state: State): void {
     this.state = state;
     this.stateTime = 0;
+    this.windLeft = 0;
+    this.wound = false;
+    this.aimAt = null;
   }
 
   /** Wanders: beasts anywhere, extras around home with long stops (STROLL). */
