@@ -1,0 +1,31 @@
+{
+  "name": "150-days",
+  "productName": "150 Days",
+  "version": "0.0.18",
+  "description": "\"150 Days\" — a fan-made first-person game inspired by Fallout 1, in the style of Doom 1. Requires the original Fallout 1.",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "vite build && electron .",
+    "package": "vite build && node tools/package.mjs",
+    "package:mac": "vite build && node tools/package-mac.mjs",
+    "patch": "vite build && node tools/package.mjs && node tools/patch.mjs",
+    "release": "node tools/release.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@types/node": "^26.6.4",
+    "electron": "^44.5.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@fontsource/vt323": "^5.3.0"
+  }
+}

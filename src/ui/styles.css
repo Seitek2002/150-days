@@ -1,0 +1,1294 @@
+@import '@fontsource/vt323/latin-400.css';
+@import '@fontsource/vt323/latin-ext-400.css';
+
+:root {
+  --bg: #0b0a08;
+  --panel: #17140f;
+  --border: #3b3326;
+  --text: #e9dcc0;
+  --muted: #b3a585;
+  --accent: #f0b43c;
+  --accent-text: #1a1206;
+  --error: #ff8a6b;
+  --rad: #e8d83a;
+  --focus: #ffd27a;
+  --font: 'VT323', 'Consolas', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 22px;
+  line-height: 1.35;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Gamepad (src/game/gamepad.ts): the browser does not treat it as a keyboard and does not draw the focus ring itself — we always draw it. */
+.pad-nav :focus:not(canvas) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pad-nav .menu-button:focus {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pad-nav .menu-primary:focus {
+  color: var(--accent-text);
+  filter: brightness(1.12);
+}
+
+/* Playing with a gamepad goes without mouse capture — hide the cursor over the game. */
+canvas.pad-play {
+  cursor: none !important;
+}
+
+/* Setup screen */
+.setup {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.setup-card {
+  width: min(640px, 100%);
+  background: var(--panel);
+  border: 2px solid var(--border);
+  padding: 32px;
+}
+
+.setup-title {
+  margin: 0;
+  font-size: 64px;
+  line-height: 1;
+  letter-spacing: 4px;
+  color: var(--accent);
+}
+
+.setup-subtitle {
+  margin: 8px 0 28px;
+  color: var(--muted);
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.field-help {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.folder-row {
+  display: flex;
+  gap: 12px;
+}
+
+.folder-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 6px 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 2px solid var(--border);
+}
+
+.folder-input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.button {
+  min-height: 48px;
+  padding: 6px 20px;
+  border: 2px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+  transition: filter 150ms ease;
+}
+
+.button:hover {
+  filter: brightness(1.12);
+}
+
+.button:disabled {
+  cursor: wait;
+  filter: grayscale(0.6);
+}
+
+/* Space for the error is reserved — the screen does not jump. */
+.field-error {
+  min-height: 2.8em;
+  margin: 8px 0 0;
+  color: var(--error);
+  font-size: 20px;
+}
+
+.setup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.lang {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lang-button {
+  min-width: 56px;
+  min-height: 44px;
+  background: transparent;
+  color: var(--text);
+  border: 2px solid var(--border);
+  cursor: pointer;
+}
+
+.lang-button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.disclaimer {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 18px;
+}
+
+/* Game */
+.game {
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.screen {
+  display: block;
+  image-rendering: pixelated;
+  /* Keep 4:3 at any window size. */
+  width: min(100vw, calc(100vh * 4 / 3));
+  height: min(100vh, calc(100vw * 3 / 4));
+  cursor: crosshair;
+}
+
+.hint {
+  position: fixed;
+  left: 50%;
+  top: 24px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: rgba(11, 10, 8, 0.82);
+  border: 2px solid var(--border);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+}
+
+.hint[hidden] {
+  display: block;
+  opacity: 0;
+}
+
+.hint-main {
+  color: var(--accent);
+}
+
+.status {
+  color: var(--muted);
+}
+
+/* Death or victory screen — over the game, centred. */
+.overlay {
+  position: fixed;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 32px));
+  padding: 24px 28px;
+  background: rgba(11, 10, 8, 0.9);
+  border: 2px solid var(--error);
+  text-align: center;
+}
+
+.overlay[hidden] {
+  display: none;
+}
+
+.overlay-won {
+  border-color: var(--accent);
+}
+
+.overlay-title {
+  margin: 0 0 8px;
+  font-size: 44px;
+  line-height: 1;
+  font-weight: normal;
+  color: var(--error);
+}
+
+.overlay-won .overlay-title {
+  color: var(--accent);
+}
+
+/* Died of radiation — the frame and title are yellow, like the frame behind the window. */
+.overlay-rad {
+  border-color: var(--rad);
+}
+
+.overlay-rad .overlay-title {
+  color: var(--rad);
+}
+
+.overlay-text,
+.overlay-stats {
+  margin: 8px 0 0;
+}
+
+.overlay-stats {
+  color: var(--muted);
+}
+
+/* Ending summary: paragraphs per location; the window is wider and scrolls inside if there is a lot. */
+.overlay-text {
+  white-space: pre-line;
+}
+
+.overlay-won {
+  top: 50%;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  text-align: left;
+}
+
+.overlay-won .overlay-title,
+.overlay-won .overlay-stats,
+.overlay-won .overlay-hint {
+  text-align: center;
+}
+
+.overlay-hint {
+  margin: 16px 0 0;
+  color: var(--accent);
+}
+
+/* Radiation in windows — over any window (pause, slot screen — z-index 20, dialogue — 15), under movies (30): the yellow tint changes colour
+   (brightness stays — labels stay readable), the noise is laid on as "screen". Position and size — as the game canvas (play.ts). */
+.rad-yellow,
+.rad-noise {
+  position: fixed;
+  z-index: 25;
+  pointer-events: none;
+}
+
+.rad-yellow {
+  mix-blend-mode: color;
+}
+
+.rad-noise {
+  image-rendering: pixelated;
+  mix-blend-mode: screen;
+}
+
+.rad-yellow[hidden],
+.rad-noise[hidden] {
+  display: none;
+}
+
+/* Elevator window on the original's images — styles in src/game/elevator-screen.ts. */
+
+/* Dialogue window on the original's images — styles in src/game/dialogue-screen.ts. */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+/* Pause and settings: the window is always the same size so nothing jumps on transitions. */
+.pause {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: rgba(11, 10, 8, 0.72);
+  cursor: default;
+}
+
+.pause[hidden] {
+  display: none;
+}
+
+.pause-card {
+  width: min(600px, 100%);
+  height: min(440px, 100%);
+  padding: 20px 28px;
+  overflow: auto;
+  background: var(--panel);
+  border: 2px solid var(--border);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.panel-title {
+  margin: 0 0 14px;
+  font-size: 44px;
+  line-height: 1;
+  font-weight: normal;
+  letter-spacing: 4px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.pause-buttons {
+  display: grid;
+  gap: 10px;
+}
+
+.menu-button {
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 20px;
+  background: transparent;
+  color: var(--text);
+  border: 2px solid var(--border);
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.menu-button:hover,
+.menu-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.menu-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.menu-primary:hover,
+.menu-primary:focus-visible {
+  color: var(--accent-text);
+  filter: brightness(1.12);
+}
+
+/* Key list — in two columns, small: it is a hint, not the main thing. */
+/* Keyboard or gamepad in the pause key list: two toggles side by side, the selected one is yellow. */
+.keys-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 18px 0 0;
+}
+
+/* Keys in one column: the key on the left, what it does on the right. */
+.pause-keys {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  margin: 14px 0 0;
+  font-size: 18px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.key-row {
+  display: flex;
+  gap: 10px;
+}
+
+.key-row dt {
+  flex: 0 0 38%;
+  color: var(--accent);
+}
+
+.key-row dd {
+  margin: 0;
+}
+
+.settings-list {
+  display: grid;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px 52px;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+}
+
+.setting-label {
+  min-width: 0;
+  font-size: 20px;
+}
+
+.setting-value {
+  text-align: right;
+  color: var(--accent);
+}
+
+.toggle {
+  min-height: 44px;
+  background: transparent;
+  color: var(--text);
+  border: 2px solid var(--border);
+  cursor: pointer;
+}
+
+.toggle[aria-checked='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#settings-back {
+  margin-top: auto;
+}
+
+.slider {
+  --fill: 50%;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 12px;
+  border: 2px solid var(--border);
+  background: linear-gradient(to right, var(--accent) var(--fill), var(--bg) var(--fill));
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 28px;
+  margin-top: -8px;
+  background: var(--text);
+  border: 2px solid var(--accent-text);
+}
+
+.slider:hover::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+/* World map: the original image in a 640×480 frame, scaled like the main screen (4:3). */
+.worldmap-canvas {
+  display: block;
+  image-rendering: pixelated;
+  width: min(100%, calc((100vh - 24px) * 4 / 3));
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border: 2px solid var(--border);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.worldmap-canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Test range panel (F2). */
+.polygon-card {
+  width: min(720px, 100%);
+  height: min(560px, 100%);
+}
+
+.polygon-section {
+  margin: 12px 0 6px;
+  font-size: 20px;
+  font-weight: normal;
+  color: var(--accent);
+}
+
+.polygon-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.polygon-row .menu-button {
+  width: auto;
+  min-height: 34px;
+  padding: 2px 12px;
+}
+
+/* "Go to location" window (F9, for testing): the search stays on top, locations scroll under it. */
+.jump-search {
+  position: sticky;
+  top: -20px;
+  z-index: 1;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 20px;
+  color: var(--text);
+  background: var(--bg);
+  border: 2px solid var(--border);
+  box-shadow: 0 -20px 0 var(--panel);
+}
+
+.jump-search:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.jump-empty {
+  margin: 16px 0;
+  color: var(--muted);
+}
+
+/* In-game character screen (K): the window is one size, lists scroll inside. */
+.sheet-card {
+  width: min(780px, 100%);
+  height: min(600px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.sheet-title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.sheet-sub {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+.sheet-cols {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 24px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sheet-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 10px;
+}
+
+.sheet-section {
+  margin: 4px 0 2px;
+  font-size: 20px;
+  font-weight: normal;
+  color: var(--accent);
+}
+
+.sheet-list {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.sheet-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.sheet-row dd {
+  margin: 0;
+}
+
+.sheet-skills {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  font-size: 18px;
+}
+
+.sheet-skill {
+  display: grid;
+  grid-template-columns: 1fr 56px 34px 34px;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 0;
+}
+
+.sheet-tagged .sheet-skill-name {
+  color: var(--accent);
+}
+
+.sheet-step {
+  min-width: 34px;
+  min-height: 28px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.sheet-step:hover:not(:disabled),
+.sheet-step:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sheet-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sheet-perks {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px 6px;
+  flex: 0 0 auto;
+  max-height: 118px;
+  overflow: auto;
+}
+
+.sheet-perk {
+  width: auto;
+  min-height: 32px;
+  padding: 2px 14px;
+  font-size: 18px;
+}
+
+.sheet-perks .sheet-section,
+.sheet-taken {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+/* Skill or perk description: constant height (the window does not jump) and does not shrink, long text scrolls with the wheel. */
+.sheet-note {
+  flex: 0 0 auto;
+  height: 6em;
+  margin: 0;
+  overflow-y: auto;
+  font-size: 17px;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.sheet-done,
+.sheet-done-self {
+  min-height: 40px;
+}
+
+/* Skilldex (U): a short list of skills. */
+.skilldex-card {
+  width: min(440px, 100%);
+  height: auto;
+}
+
+.skilldex-title {
+  margin-bottom: 4px;
+  font-size: 32px;
+}
+
+.skilldex-target {
+  margin: 0 0 12px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.skilldex-skill {
+  display: flex;
+  justify-content: space-between;
+  min-height: 40px;
+}
+
+/* "Tag!": a skill can be made tagged by clicking its name. */
+.sheet-taggable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+/* Location editor: top — location and buttons, left — blocks, middle — the map, right — floors, bottom — the hint. */
+.editor {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr) 230px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'top top top'
+    'blocks map floors'
+    'status status status';
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
+}
+
+.editor-top {
+  grid-area: top;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 16px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 2px solid var(--border);
+}
+
+.editor-title {
+  margin: 0 8px 0 0;
+  align-self: center;
+  font-size: 30px;
+  font-weight: normal;
+  color: var(--accent);
+}
+
+.editor-field {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.editor-field select,
+.editor-field input {
+  min-width: 210px;
+  padding: 2px 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 2px solid var(--border);
+  font-size: 20px;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.editor-actions .menu-button,
+.editor-floor-buttons .menu-button {
+  width: auto;
+  min-height: 40px;
+  padding: 2px 14px;
+}
+
+.editor-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border: 2px solid var(--border);
+}
+
+.editor-side h2 {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 22px;
+  font-weight: normal;
+  color: var(--accent);
+  border-bottom: 2px solid var(--border);
+}
+
+.editor-side ul {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.editor-blocks {
+  grid-area: blocks;
+}
+
+.editor-floors {
+  grid-area: floors;
+}
+
+.editor-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border: 2px solid transparent;
+  font-size: 19px;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.editor-item:hover {
+  background: #221d15;
+}
+
+.editor-item[aria-selected='true'] {
+  background: #2a2216;
+  border-color: var(--accent);
+}
+
+.editor-swatch {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #000;
+}
+
+.editor-group {
+  padding: 8px 6px 2px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.editor-floor {
+  justify-content: space-between;
+}
+
+.editor-count {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.editor-floor-buttons {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border-top: 2px solid var(--border);
+}
+
+/* Location ceiling — under the floor buttons. */
+.editor-ceiling {
+  padding: 6px;
+  border-top: 2px solid var(--border);
+}
+
+.editor-ceiling select {
+  width: 100%;
+  min-width: 0;
+}
+
+.editor-map {
+  grid-area: map;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 2px solid var(--border);
+}
+
+.editor-map canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+/* Tooltip at the cursor: over the map, does not shift the layout. */
+.editor-tip {
+  position: absolute;
+  max-width: 440px;
+  padding: 4px 8px;
+  background: rgba(11, 10, 8, 0.92);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.2;
+  white-space: pre-line;
+  pointer-events: none;
+}
+
+.editor-status {
+  grid-area: status;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 28px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.editor-status #ed-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.editor-status .editor-error {
+  color: var(--error);
+}
+
+/* Editor question about unsaved changes: a short window on top. */
+.editor-ask {
+  height: auto;
+}
+
+/* Custom block window: fields on top, the image grid scrolls, the buttons at the bottom are always in place. */
+.editor-block-card {
+  width: min(720px, 100%);
+  height: min(680px, 100%);
+  padding: 16px 20px;
+}
+
+.editor-block-panel {
+  gap: 8px;
+  height: 100%;
+}
+
+.editor-block-panel h2 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: normal;
+  color: var(--accent);
+}
+
+.editor-texture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 4px;
+  flex: 1;
+  min-height: 120px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+}
+
+.editor-texture {
+  display: grid;
+  place-items: center;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.editor-texture canvas {
+  width: 36px;
+  height: 36px;
+}
+
+.editor-texture[aria-selected='true'] {
+  border-color: var(--accent);
+}
+
+.editor-door-fields {
+  display: grid;
+  gap: 6px;
+}
+
+.editor-door-fields[hidden] {
+  display: none;
+}
+
+.editor-sound-row {
+  display: flex;
+  gap: 6px;
+}
+
+.editor-sound-row select {
+  flex: 1;
+}
+
+.editor-block-buttons {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.editor-block-buttons .menu-button[hidden] {
+  display: none;
+}
+
+/* "Share location": two parts — give to a friend and install from a friend. */
+.editor-share-card {
+  height: auto;
+  max-height: 100%;
+}
+
+.editor-share-card h3.editor-group {
+  margin: 8px 0 0;
+  font-size: 20px;
+  font-weight: normal;
+  color: var(--accent);
+}
+
+.editor-share-card .editor-hint {
+  white-space: pre-line;
+}
+
+.editor-share-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editor-share-list .menu-button {
+  width: auto;
+}
+
+/* Block search above the list ("Blocks" tab). */
+.editor-filter {
+  margin: 6px 6px 0;
+  padding: 4px 8px;
+  background: #0b0a08;
+  color: var(--text);
+  border: 1px solid var(--border);
+  font: inherit;
+  font-size: 18px;
+}
+
+.editor-filter[hidden] {
+  display: none;
+}
+
+.editor-block-picture {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-block-picture .editor-group {
+  flex: 1;
+  padding: 0;
+}
+
+.editor-block-picture canvas {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+}
+
+.editor-ask-text {
+  margin: 0 0 16px;
+  font-size: 24px;
+}
+
+/* Custom locations in settings: an explanation and a variant choice for each location. */
+.settings-note {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.place-select {
+  min-width: 0;
+  max-width: 260px;
+  padding: 2px 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 2px solid var(--border);
+  font: inherit;
+  font-size: 20px;
+}
+
+.place-row {
+  grid-template-columns: minmax(0, 1fr) 240px;
+}
+
+/* The line under a setting name (Fallout 1 folder): smaller and muted, long text — with an ellipsis. */
+.setting-sub {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.settings-error {
+  color: var(--error);
+}
+
+/* Location editor: "Blocks" / "Transitions" tabs and the settings of the selected transition. */
+.editor-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 2px solid var(--border);
+}
+
+.editor-tab {
+  padding: 6px 2px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 19px;
+  cursor: pointer;
+}
+
+.editor-tab[aria-selected='true'] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.editor-marks-mode ul {
+  flex: none;
+}
+
+/* "People": the long enemy list scrolls, under it — a fixed-height space for the selected critter. */
+.editor-people-mode .editor-props {
+  flex: none;
+  height: 36%;
+  min-height: 150px;
+}
+
+.editor-decor-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editor-person {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.15;
+  color: var(--accent);
+}
+
+.editor-props {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  overflow-y: auto;
+  border-top: 2px solid var(--border);
+}
+
+.editor-props .editor-field select,
+.editor-props .editor-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.editor-check {
+  display: flex;
+  gap: 8px;
+  align-items: start;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.editor-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.editor-lift-floor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 6px;
+  align-items: end;
+}
+
+.editor-lift-floor .editor-field:nth-of-type(2) {
+  grid-column: 2;
+}
+
+.editor-props .editor-small {
+  width: auto;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+/* The card after the Overseer's speech: lines appear one by one, the space for each is taken at once. */
+.intro-card {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 40px;
+  padding: 24px;
+  background: #000;
+  color: var(--text);
+  cursor: default;
+}
+
+.intro-lines {
+  display: grid;
+  gap: 16px;
+  max-width: 780px;
+}
+
+.intro-line {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.3;
+  opacity: 0;
+  transition: opacity 900ms ease;
+}
+
+.intro-line:last-child {
+  margin-top: 12px;
+  color: var(--accent);
+  font-size: 38px;
+}
+
+.intro-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 18px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+
+.intro-line.shown,
+.intro-hint.shown {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intro-line,
+  .intro-hint {
+    transition: none;
+  }
+}

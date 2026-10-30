@@ -1,0 +1,26 @@
+node_modules
+dist
+out
+# Patches for friends (npm run patch); copies are attached to the GitHub releases.
+patches/
+.local
+
+# Screenshots and reference data from the player's Fallout copy: this computer only, never in the project history.
+docs/img/
+docs/data/
+
+# Generated weapon-in-hand pictures (some resemble Fallout weapons): this computer only.
+public/weapons/*.png
+public/weapons/*.webp
+
+# Code map for Claude (graphify): built and updated on this computer (graphify update .).
+graphify-out/
+
+# Location variants from the location editor: each player has their own.
+locations/
+
+# Block library (the game exports our blocks on start; custom ones belong to each player).
+blocks/
+
+# Packed locations for friends (location editor -> "Share").
+packs/
