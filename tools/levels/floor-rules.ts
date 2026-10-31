@@ -62,9 +62,9 @@ export const MAP_RULES: Record<string, { floor?: Rules; walls?: Rules }> = {
   // The Military Base: light ribbed steel plates (our own texture).
   MBSTRG12: { floor: [[/^plt/i, 'baseFloor']] },
   MBVATS12: { floor: [[/^plt/i, 'baseFloor']] },
-  // The Glow: brown tiles and rusty floor grating (our own textures); the original's brick floor there is tiles too.
-  GLOW1: { floor: [[/^brn/i, 'glowTile'], [/^grt/i, 'glowGrate']] },
-  GLOW2: { floor: [[/^brn/i, 'glowTile'], [/^grt/i, 'glowGrate']] },
+  // The Glow: a marble floor where the original has brown tiles (client, 2026-10-31: a shelter for the powerful) and rusty floor grating.
+  GLOW1: { floor: [[/^brn/i, 'glowLuxFloor'], [/^grt/i, 'glowGrate']] },
+  GLOW2: { floor: [[/^brn/i, 'glowLuxFloor'], [/^grt/i, 'glowGrate']] },
   // The Boneyard, gun runners: the moat around the warehouse is bright green toxic sludge, not water.
   LAGUNRUN: { floor: [[/^slime/i, 'toxicSlime'], [/^capb/i, 'wasteland']] },
 };

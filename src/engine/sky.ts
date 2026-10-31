@@ -88,14 +88,14 @@ export function cloudAt(u: number, v: number): number {
   return t[((Math.floor(v) & (CLOUD - 1)) << 8) | (Math.floor(u) & (CLOUD - 1))] ?? 0;
 }
 
-/** A star in this direction (0 — none, up to 1 — bright). */
-export function starAt(az: number, elevation: number): number {
+/** A star in this direction (0 — none, up to 1 — bright); rate — what share of points hold a star (the Milky Way is denser). */
+export function starAt(az: number, elevation: number, rate = 0.0035): number {
   const ix = Math.floor(az * 300);
   const iy = Math.floor(elevation * 300);
   let h = (Math.imul(ix, 374761393) + Math.imul(iy, 668265263)) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   const r = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-  return r > 0.9965 ? (r - 0.9965) / 0.0035 : 0;
+  return r > 1 - rate ? (r - (1 - rate)) / rate : 0;
 }
 
 /** Size of the Moon image (points per side). */

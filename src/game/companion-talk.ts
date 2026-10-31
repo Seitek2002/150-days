@@ -5,7 +5,9 @@
 // - the hero has a gun better than his among his items, and the companion handles it better than the hero — asks for it;
 // - a trader on this map (a real one: his script has barter — scripts.ts → trades) has a better gun —
 //   offers to buy it (and ammo) with the hero's money at the price without markup ("from a friend, at a discount"): once a day per
-//   map, whatever the answer.
+//   map, whatever the answer;
+// - he shot all his ammo in a fight (client, 2026-10-31) — after it asks for the hero's ammo for his gun, and if the hero has none, for
+//   money to buy it himself; with money of his own he buys ammo from this map's trader on his own.
 // The texts are our own (i18n.ts, "comp…"), the head in the window is the one the companion's script talks with (scripts.ts remembers it).
 import { ITEM_TYPE, type ItemProto } from '../formats/pro.ts';
 import type { DialogueUI } from '../script/game-functions.ts';
@@ -207,9 +209,19 @@ export class CompanionTalk {
       });
   }
 
-  /** What the companion should say on his own (by importance): skill points, the hero's gun, a trader's gun. Nothing — null. */
+  /**
+   * What the companion should say on his own (by importance): out of ammo, skill points, the hero's gun, a trader's gun. Nothing — null.
+   */
   private async findOffer(m: PartyMember): Promise<(() => Promise<void>) | null> {
     const s = this.session;
+    const empty = await this.emptyGun(m);
+    if (empty) {
+      if (m.creature.inventory.count(CAPS_PID) > 0) {
+        const deal = await this.ammoShop(m, empty, m.creature.inventory.count(CAPS_PID));
+        if (deal) return () => this.buyOwnAmmo(m, deal);
+      }
+      if (m.outOfAmmo) return () => this.askAmmo(m, empty);
+    }
     const p = s.progressOf(m);
     if (p.points > 0 && p.idle >= ASK_POINTS_AFTER) return () => this.askPoints(m);
     const own = await this.bestOwned(m);
@@ -220,6 +232,96 @@ export class CompanionTalk {
     const deal = await this.shopFor(m, own);
     if (deal) return () => this.askShop(m, deal, shopKey);
     return null;
+  }
+
+  /** The companion's best gun (one he can hold) that has no ammo among his items; all have ammo or there are none — null. */
+  private async emptyGun(m: PartyMember): Promise<ItemProto | null> {
+    const items = m.creature.inventory.items;
+    let best: ItemProto | null = null;
+    for (const st of items) {
+      const gun = st.proto;
+      if (!isGun(gun) || (best && wieldScore(gun, m.kind.fighter) <= wieldScore(best, m.kind.fighter))) continue;
+      if (!(await this.session.res.canWield(m.kind.pid, gun))) continue;
+      best = gun;
+    }
+    if (!best || items.some((st) => ammoFits(st.proto, best.weapon!))) return null;
+    return best;
+  }
+
+  /** How many rounds the companion wants for a gun: two magazines, no less than a box. */
+  private ammoWanted(gun: ItemProto, ammo: ItemProto | null): number {
+    return AMMO_MAGAZINES * Math.max(gun.weapon!.capacity, ammo?.ammo?.quantity ?? 1);
+  }
+
+  /**
+   * Out of ammo (after a fight): in the dialogue window asks for the hero's ammo for his gun; the hero has none — for money to buy it
+   * himself (the price of two magazines of the gun's own ammo without markup; as much as the hero has, if less, but no less than one
+   * magazine). Refused or nothing to give — doesn't ask again until he runs out the next time.
+   */
+  private async askAmmo(m: PartyMember, gun: ItemProto): Promise<void> {
+    const s = this.session;
+    m.outOfAmmo = false;
+    const weapon = s.res.itemName(gun);
+    const gift = this.ammoGift(m);
+    if (gift && ammoFits(gift.proto, gun.weapon!)) {
+      const n = Math.min(gift.count, Math.max(gun.weapon!.capacity, this.ammoWanted(gun, gift.proto)));
+      this.openWindow(m);
+      const choice = await this.host.ui.ask(tf('compAskAmmo', { weapon, ammo: s.res.itemName(gift.proto), n }), [tf('compAskAmmoYes', { n }), t('compAskAmmoNo')]);
+      if (choice !== 0) return;
+      this.says(m, await this.giveAmmo(m, { proto: gift.proto, count: n }));
+      return;
+    }
+    const ammo = gun.weapon!.ammoPid > 0 ? await s.res.item(gun.weapon!.ammoPid).catch(() => null) : null;
+    if (!ammo) return;
+    const unit = unitPrice(ammo);
+    const caps = s.hero.inventory.count(CAPS_PID);
+    const price = Math.min(Math.ceil(unit * this.ammoWanted(gun, ammo)), caps);
+    if (price < Math.ceil(unit * gun.weapon!.capacity) || price <= 0) return;
+    this.openWindow(m);
+    const choice = await this.host.ui.ask(tf('compAskMoney', { weapon, ammo: s.res.itemName(ammo), price }), [tf('compAskMoneyYes', { price }), t('compAskMoneyNo')]);
+    if (choice !== 0) return;
+    const given = s.hero.inventory.remove(CAPS_PID, price);
+    if (given <= 0) return;
+    m.creature.inventory.add(await s.res.item(CAPS_PID), given);
+    // A trader right here — buys at once; otherwise at the first trader on the way (findOffer → buyOwnAmmo).
+    const deal = await this.ammoShop(m, gun, given);
+    this.host.ui.close();
+    if (deal) await this.buyOwnAmmo(m, deal);
+    else this.says(m, t('compMoneyThanks'));
+  }
+
+  /** Ammo for the gun from this map's traders that the companion can pay for with caps; the most rounds for the money. None — null. */
+  private async ammoShop(m: PartyMember, gun: ItemProto, caps: number): Promise<ShopDeal | null> {
+    const s = this.session;
+    let best: ShopDeal | null = null;
+    for (const c of s.scene.creatures) {
+      if (!c.alive || !c.present || c.hostile || s.scene.allies.has(c)) continue;
+      const stock = await this.host.stock(c);
+      if (!stock) continue;
+      for (const st of stock.items) {
+        if (!ammoFits(st.proto, gun.weapon!)) continue;
+        const unit = unitPrice(st.proto);
+        const count = Math.min(st.count, this.ammoWanted(gun, st.proto), unit > 0 ? Math.floor(caps / unit) : st.count);
+        if (count <= 0 || (best && count <= best.ammoCount)) continue;
+        best = { merchant: c, stock, gun, gunPrice: 0, ammo: st.proto, ammoCount: count, ammoPrice: Math.ceil(unit * count) };
+      }
+    }
+    return best;
+  }
+
+  /** The companion buys ammo with his own money: his caps go to the trader, the rounds to him. */
+  private async buyOwnAmmo(m: PartyMember, deal: ShopDeal): Promise<void> {
+    const s = this.session;
+    if (!deal.ammo) return;
+    const n = deal.stock.remove(deal.ammo.pid, deal.ammoCount);
+    if (n <= 0) return;
+    const price = Math.min(m.creature.inventory.count(CAPS_PID), Math.ceil(unitPrice(deal.ammo) * n));
+    m.creature.inventory.add(deal.ammo, n);
+    m.creature.inventory.remove(CAPS_PID, price);
+    deal.stock.add(await s.res.item(CAPS_PID), price);
+    await s.equipCompanion(m.creature);
+    s.say(tf('msgCompanionBoughtOwn', { name: m.creature.stats.name, items: `${s.res.itemName(deal.ammo)} ×${n}`, price }));
+    this.says(m, t('compBoughtOwn'));
   }
 
   /** How good the best gun among the companion's items is for himself (none — 0). */

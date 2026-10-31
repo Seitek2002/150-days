@@ -4,6 +4,7 @@ import { ANIM, GameData } from '../assets/gamedata.ts';
 import { GameAssets, type SpriteSheet } from '../assets/sprites.ts';
 import { Sound } from '../audio/sound.ts';
 import { STAT, type CritterProto, type ItemProto, type WeaponData } from '../formats/pro.ts';
+import { parseAiPackets, type AiPacket } from '../formats/ai-txt.ts';
 import { platform } from '../platform.ts';
 import type { ParsedLevel } from '../world/defs.ts';
 import { FAN_CRITTERS, PID } from '../world/pids.ts';
@@ -65,6 +66,8 @@ export interface CritterKind {
   fighter: Fighter;
   /** PID of the weapon in hand (0 means unarmed): to rebuild the same critter (a companion in a save). */
   weaponPid: number;
+  /** Never runs away, however badly wounded (its AI packet in AI.TXT says so: min_hp 1 or less — Gizmo, Killian, super mutants, deathclaws). */
+  fightsToDeath?: boolean;
 }
 
 /** NPC "aim time" before a shot (seconds), on top of the shot time from AP, as for the hero. */
@@ -123,6 +126,8 @@ export class Resources {
     const loadout: Loadout = { weapon: weapon as ItemProto & { weapon: WeaponData }, ammo, stimpak };
     const hud = new Hud({ bar, itemSlot, weapon: weaponImage, numbers, font: fonts.main, apLight, indicatorBox, itemImage: (item) => data.inventoryImage(item) });
     const res = new Resources(data, sound, fonts, hud, new ItemScreens(screenArt, data, fonts.main), automap, loadout);
+    const ai = await platform.readGameFile('DATA\\AI.TXT').catch(() => null);
+    if (ai) res.aiPackets = parseAiPackets(new TextDecoder('windows-1252').decode(ai));
     const code = loadout.weapon.weapon.soundCode ?? '0';
     await sound.preload([
       ...Object.values(SFX),
@@ -149,6 +154,18 @@ export class Resources {
       this.ground.set(proto.pid, sheet);
     }
     return sheet;
+  }
+
+  /** The original's combat behavior packets (DATA\AI.TXT) by number; empty if the copy has no such file. */
+  aiPackets = new Map<number, AiPacket>();
+
+  /**
+   * Whether a critter with this AI packet fights to the death (client, 2026-10-31: Gizmo ran away): in the original a critter turns to
+   * run once its hit points fall to the packet's min_hp, and 1 or less means it never does.
+   */
+  fightsToDeath(packet: number): boolean {
+    const p = this.aiPackets.get(packet);
+    return !!p && p.minHp <= 1;
   }
 
   /** Critter look; weaponPid is the weapon in hand ("armed" images, shots or blows with that weapon). */
@@ -325,6 +342,6 @@ export class Resources {
         stats.damage = damage;
       }
     }
-    return { pid, art: { stand, walk, attack, hit, death }, soundBase, bites: soundBase.startsWith('MA'), weapon, stats, fighter, weaponPid };
+    return { pid, art: { stand, walk, attack, hit, death }, soundBase, bites: soundBase.startsWith('MA'), weapon, stats, fighter, weaponPid, fightsToDeath: this.fightsToDeath(proto.aiPacket) };
   }
 }

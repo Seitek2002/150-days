@@ -498,14 +498,101 @@ export function skyPosition(ra: number, dec: number, sidereal: number, latitude 
 
 /**
  * Galaxies and nebulae the eye can make out only after adapting to the dark (client request, 2026-10-26): position on the celestial
- * sphere (radians), patch size (radians on our sky — larger than the real ones, otherwise they can't be made out), elongation, tilt
- * and brightness. The Andromeda Galaxy, the Triangulum Galaxy and the Orion Nebula.
+ * sphere (radians), patch size (radians on our sky — larger than the real ones, otherwise they can't be made out), elongation, tilt,
+ * brightness and a bright core (0 — none; client, 2026-10-31: the galaxies were too faint to notice). The Andromeda Galaxy, the
+ * Triangulum Galaxy, the Orion Nebula, the Lagoon Nebula and the great globular cluster in Hercules.
  */
-export const DEEP_SKY: readonly { ra: number; dec: number; size: number; stretch: number; tilt: number; shine: number }[] = [
-  { ra: 0.712 * 15 * RAD, dec: 41.27 * RAD, size: 0.05, stretch: 3, tilt: 0.6, shine: 1 },
-  { ra: 1.564 * 15 * RAD, dec: 30.66 * RAD, size: 0.028, stretch: 1.6, tilt: -0.4, shine: 0.6 },
-  { ra: 5.588 * 15 * RAD, dec: -5.39 * RAD, size: 0.026, stretch: 1.3, tilt: 0.3, shine: 0.75 },
+export const DEEP_SKY: readonly { ra: number; dec: number; size: number; stretch: number; tilt: number; shine: number; core: number }[] = [
+  { ra: 0.712 * 15 * RAD, dec: 41.27 * RAD, size: 0.05, stretch: 3, tilt: 0.6, shine: 1, core: 1 },
+  { ra: 1.564 * 15 * RAD, dec: 30.66 * RAD, size: 0.028, stretch: 1.6, tilt: -0.4, shine: 0.6, core: 0.3 },
+  { ra: 5.588 * 15 * RAD, dec: -5.39 * RAD, size: 0.026, stretch: 1.3, tilt: 0.3, shine: 0.75, core: 0.7 },
+  { ra: 18.06 * 15 * RAD, dec: -24.38 * RAD, size: 0.024, stretch: 1.8, tilt: 0.2, shine: 0.6, core: 0.4 },
+  { ra: 16.695 * 15 * RAD, dec: 36.46 * RAD, size: 0.012, stretch: 1, tilt: 0, shine: 0.7, core: 1 },
 ];
+
+/** A star of an open cluster: place on the celestial sphere (radians) and magnitude. */
+export interface ClusterStar {
+  ra: number;
+  dec: number;
+  mag: number;
+}
+
+/** Hours, minutes, seconds of right ascension and degrees, minutes of declination → radians. */
+const raOf = (h: number, m: number, sec = 0): number => (h + m / 60 + sec / 3600) * 15 * RAD;
+const decOf = (d: number, m: number): number => (Math.sign(d || 1) * (Math.abs(d) + m / 60)) * RAD;
+
+/**
+ * Open star clusters (client, 2026-10-31: "I see the haze but no clusters"): centre on the celestial sphere, real radius (radians),
+ * spread — how many times wider they are drawn (at real size most are a few pixels), how many faint members are scattered around
+ * (count, magnitudes from bright to faint) and the brightest members at their real places. The Pleiades, the Hyades, the Beehive,
+ * the Double Cluster in Perseus, the Coma Star Cluster, Ptolemy's Cluster and the Butterfly Cluster.
+ */
+const CLUSTER_DEFS: readonly {
+  ra: number;
+  dec: number;
+  radius: number;
+  spread: number;
+  count: number;
+  mags: readonly [number, number];
+  members?: readonly ClusterStar[];
+}[] = [
+  {
+    ra: raOf(3, 47, 0),
+    dec: decOf(24, 7),
+    radius: 1 * RAD,
+    spread: 2.5,
+    count: 26,
+    mags: [5.8, 8],
+    members: [
+      { ra: raOf(3, 47, 29), dec: decOf(24, 6.3), mag: 2.9 },
+      { ra: raOf(3, 49, 10), dec: decOf(24, 3.2), mag: 3.6 },
+      { ra: raOf(3, 44, 53), dec: decOf(24, 6.8), mag: 3.7 },
+      { ra: raOf(3, 45, 50), dec: decOf(24, 22.1), mag: 3.9 },
+      { ra: raOf(3, 46, 20), dec: decOf(23, 56.9), mag: 4.2 },
+      { ra: raOf(3, 45, 12), dec: decOf(24, 28), mag: 4.3 },
+      { ra: raOf(3, 49, 11), dec: decOf(24, 8.2), mag: 5.1 },
+      { ra: raOf(3, 44, 48), dec: decOf(24, 17.4), mag: 5.4 },
+      { ra: raOf(3, 45, 54), dec: decOf(24, 33.3), mag: 5.8 },
+    ],
+  },
+  { ra: raOf(4, 27), dec: decOf(15, 52), radius: 2.5 * RAD, spread: 1, count: 22, mags: [3.4, 6.5] },
+  { ra: raOf(8, 40), dec: decOf(19, 59), radius: 0.6 * RAD, spread: 2.5, count: 32, mags: [6, 8] },
+  { ra: raOf(2, 19), dec: decOf(57, 9), radius: 0.25 * RAD, spread: 3, count: 22, mags: [6.5, 9] },
+  { ra: raOf(2, 22), dec: decOf(57, 7), radius: 0.25 * RAD, spread: 3, count: 22, mags: [6.5, 9] },
+  { ra: raOf(12, 25), dec: decOf(26, 0), radius: 2.5 * RAD, spread: 1, count: 20, mags: [4.5, 6.8] },
+  { ra: raOf(17, 54), dec: decOf(-34, 49), radius: 0.6 * RAD, spread: 2.5, count: 28, mags: [5.6, 8] },
+  { ra: raOf(17, 40), dec: decOf(-32, 13), radius: 0.3 * RAD, spread: 2.5, count: 16, mags: [6, 8.5] },
+];
+
+/** A repeatable random sequence (the same scatter of cluster stars every game). */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** All cluster stars, widened by each cluster's spread around its centre (CLUSTER_DEFS). */
+export const CLUSTER_STARS: readonly ClusterStar[] = CLUSTER_DEFS.flatMap((c, k) => {
+  const rnd = seeded(7919 * (k + 1));
+  const widen = (star: ClusterStar): ClusterStar => ({
+    ra: c.ra + (star.ra - c.ra) * c.spread,
+    dec: c.dec + (star.dec - c.dec) * c.spread,
+    mag: star.mag,
+  });
+  const scatter: ClusterStar[] = [];
+  for (let i = 0; i < c.count; i++) {
+    // Denser towards the centre, fainter on average further out.
+    const r = c.radius * Math.sqrt(rnd()) * (0.4 + 0.6 * rnd());
+    const a = rnd() * Math.PI * 2;
+    const t = rnd();
+    scatter.push({ ra: c.ra + (r * Math.cos(a)) / Math.max(0.2, Math.cos(c.dec)), dec: c.dec + r * Math.sin(a), mag: c.mags[0] + (c.mags[1] - c.mags[0]) * t * t });
+  }
+  return [...(c.members ?? []), ...scatter].map(widen);
+});
 
 /** North Galactic Pole (radians): the Milky Way's latitude is measured from it. */
 export const GALACTIC_POLE = { ra: 192.86 * RAD, dec: 27.13 * RAD };

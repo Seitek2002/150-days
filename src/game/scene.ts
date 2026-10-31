@@ -714,6 +714,7 @@ export class Scene {
         creature.agility = kind.fighter.special.agility;
         creature.wanders = kind.bites;
         creature.talks = !kind.bites || isMutant(kind);
+        creature.fightsToDeath = !!kind.fightsToDeath;
         setRunSpeed(creature, kind);
         scene.befriend(creature, kind);
         const saved = state.creatures[key];
@@ -2594,6 +2595,7 @@ export class Scene {
     creature.agility = kind.fighter.special.agility;
     creature.wanders = kind.bites;
     creature.talks = !kind.bites || isMutant(kind);
+    creature.fightsToDeath = !!kind.fightsToDeath;
     setRunSpeed(creature, kind);
     this.befriend(creature, kind);
     this.creatures.push(creature);

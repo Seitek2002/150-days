@@ -146,6 +146,18 @@ describe('the wounded', () => {
     expect(log.barks).toContain('retreat');
   });
 
+  it('one who fights to the death (its AI packet says so, like Gizmo) does not retreat even at a quarter of health', () => {
+    const c = new Creature(1, 10.5, 5.5, stats, art, true, east, pistol);
+    c.talks = true;
+    c.fightsToDeath = true;
+    const hero = { x: 14.5, y: 5.5, alive: true };
+    run(c, field, hero, 0.1);
+    c.hurt(23);
+    const log = run(c, field, hero, 3);
+    expect(c.plan).not.toBe('flee');
+    expect(log.fired.length).toBeGreaterThan(0);
+  });
+
   it('an animal at a third of health flees and stays silent', () => {
     const c = new Creature(1, 10.5, 5.5, stats, art, true, east);
     const hero = { x: 13.5, y: 5.5, alive: true };

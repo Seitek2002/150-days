@@ -13,9 +13,9 @@ const config: LevelConfig = {
   revision: 1,
   // As in the original (client, 2026-10-25): pinkish-brown concrete wall slabs, brown tiles and rusty floor grating,
   // brown doors (previously grey concrete panels and grey tiles).
-  wallTexture: 'glowPanel',
-  floor: 'glowTile',
-  ceiling: 'glowCeiling',
+  wallTexture: 'glowLuxWall',
+  floor: 'glowLuxFloor',
+  ceiling: 'glowLuxCeiling',
   paint: true,
   // Rooms behind doors that hold only furniture (the lab with tanks) are floor, not rock (they used to disappear).
   doorSeeds: true,

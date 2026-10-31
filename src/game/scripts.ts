@@ -140,6 +140,9 @@ const SCREEN_REACH = 6;
 /** move_to of the hero to another elevation: that elevation's entry point no farther than this many cells from the hex. */
 const HERO_MOVE_REACH = 3;
 
+/** The story variable a script's load_map writes its entrance number to (VAULT13.GAM). */
+const LOAD_MAP_INDEX = 'LOAD_MAP_INDEX';
+
 /** The original map of a level (it determines the map variables, the "first visit" and the map script). */
 const originalOf = (def: LevelDef): string => (def.original ?? def.id).toUpperCase();
 
@@ -196,6 +199,8 @@ export class ScriptRuntime {
   /** SCRIPTS.LST: number → file name without ".int" (uppercase). */
   private readonly names: string[];
   private readonly globalsInit: number[];
+  /** Story variable names (VAULT13.GAM), by number. */
+  private readonly globalNames: string[];
   private readonly protoMsg: Map<number, string>;
   private readonly mapInit = new Map<string, number[]>();
   /** Map numbers from the original MAP headers (for cur_map_index): map name → number. */
@@ -224,6 +229,8 @@ export class ScriptRuntime {
   private talkRequests: GameObject[] = [];
   /** by: the script that asked (the caravan driver, etc.). */
   private travelRequest: (Destination & { by?: string }) | null = null;
+  /** The next map arrival is a script's load_map (it already set LOAD_MAP_INDEX). */
+  private scriptArrival = false;
   /** Entering a map is in progress: items the map script gives the hero (the starting kit) come without "You picked up" lines. */
   private quietItems = false;
   /** The item the hero is using on an object right now (obj_being_used_with). */
@@ -281,11 +288,12 @@ export class ScriptRuntime {
   /** The script log (what isn't done, errors), for debugging. */
   readonly journal: string[] = [];
 
-  private constructor(res: Resources, ui: DialogueUI, names: string[], globalsInit: number[], protoMsg: Map<number, string>) {
+  private constructor(res: Resources, ui: DialogueUI, names: string[], globalsInit: number[], protoMsg: Map<number, string>, globalNames: string[] = []) {
     this.res = res;
     this.ui = ui;
     this.names = names;
     this.globalsInit = globalsInit;
+    this.globalNames = globalNames;
     this.protoMsg = protoMsg;
   }
 
@@ -296,7 +304,28 @@ export class ScriptRuntime {
       platform.readGameFile(`TEXT${B}ENGLISH${B}GAME${B}PROTO.MSG`).then(parseMsg),
     ]);
     const names = list.map((line) => line.split('.')[0]!.trim().toUpperCase());
-    return new ScriptRuntime(res, ui, names, gam.values, proto);
+    return new ScriptRuntime(res, ui, names, gam.values, proto, gam.names);
+  }
+
+  /** A story variable by its name in VAULT13.GAM (the numbering differs between copies); unknown names are ignored. */
+  setGlobalByName(name: string, value: number): void {
+    const n = this.globalNames.indexOf(name);
+    if (n >= 0 && this.session) this.session.vars[`g${n}`] = value;
+  }
+
+  private globalByName(name: string): number {
+    const n = this.globalNames.indexOf(name);
+    return n < 0 || !this.session ? 0 : (this.session.vars[`g${n}`] ?? this.globalsInit[n] ?? 0);
+  }
+
+  /**
+   * Saves from before 2026-10-31: Lars hid Killian and himself at home for the raid on Gizmo (LARS_N_KILLIAN_ON_CASINO), but the raid never
+   * began (the entrance number was lost), the hero killed Gizmo on his own, and Killian stayed hidden for good. Gizmo dead and the hero
+   * elsewhere — the raid is over: they come back.
+   */
+  private repairGizmoRaid(session: Session): void {
+    if (this.mapName(session) === 'JUNKCSNO') return;
+    if (this.globalByName('LARS_N_KILLIAN_ON_CASINO') === 1 && this.globalByName('GIZMO_DEAD') === 1) this.setGlobalByName('LARS_N_KILLIAN_ON_CASINO', 0);
   }
 
   /** A new playthrough (new game or load): scripts start over, variables come from the save. */
@@ -319,6 +348,13 @@ export class ScriptRuntime {
    */
   async enterMap(previous: LevelDef | null): Promise<void> {
     const session = this.require();
+    // Arriving at another original map not by a script's load_map (an exit, the world map): no entrance number (LOAD_MAP_INDEX = 0),
+    // as in the original — otherwise the Junktown script, seeing the jail entrance left over, would fine the hero on every visit.
+    if (previous && originalOf(previous) !== this.mapName(session)) {
+      if (!this.scriptArrival) this.setGlobalByName(LOAD_MAP_INDEX, 0);
+      this.scriptArrival = false;
+      this.repairGizmoRaid(session);
+    }
     this.critterClock.clear();
     this.updateLeft = MAP_UPDATE_SECONDS;
     this.updatedAt = session.clock.scriptSeconds;
@@ -1852,6 +1888,9 @@ export class ScriptRuntime {
         if (trait !== OBJECT_TRAIT.aiPacket && trait !== OBJECT_TRAIT.team) return;
         const target = o as GameObject;
         target.traits = { ...target.traits, [trait]: value };
+        // A new combat behavior: whether it will now fight to the death.
+        const c = trait === OBJECT_TRAIT.aiPacket ? creatureOf(o) : null;
+        if (c) c.fightsToDeath = runtime.res.fightsToDeath(value);
       },
       kill: (o) => {
         if (o.kind === 'dude') session().hero.takeDamage(session().hero.hp);
@@ -2048,6 +2087,10 @@ export class ScriptRuntime {
           return;
         }
         runtime.travelRequest = { ...to, by: scriptName };
+        // As in the original, the entrance number goes into LOAD_MAP_INDEX: the map script of the destination looks at it (Lars takes the
+        // hero to the casino with entrance 4, and only then does the casino script bring Killian, Lars and Gizmo's guards for the raid).
+        runtime.setGlobalByName(LOAD_MAP_INDEX, entrance);
+        runtime.scriptArrival = true;
       },
       openWorldMap: () => {
         runtime.worldMapRequest = true;

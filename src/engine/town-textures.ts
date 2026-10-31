@@ -60,6 +60,9 @@ export type TownTexture =
   | 'glowTile'
   | 'glowGrate'
   | 'glowCeiling'
+  | 'glowLuxWall'
+  | 'glowLuxFloor'
+  | 'glowLuxCeiling'
   | 'baseWall'
   | 'baseFloor';
 
@@ -1503,6 +1506,227 @@ function glowCeiling(): Texture {
   }, 1);
 }
 
+// ---------- The Glow as a shelter for the powerful (client, 2026-10-31): expensive finishes, eaten by rust and radiation ----------
+
+/** Brass by how worn it is: polished gold, dulled bronze, green verdigris. */
+function brass(p: Px, shine: number, verdigris: number, k: number): void {
+  const r = lerp(lerp(120, 236, shine), 92, verdigris);
+  const g = lerp(lerp(86, 196, shine), 146, verdigris);
+  const b = lerp(lerp(38, 108, shine), 118, verdigris);
+  put(p, r, g, b, k);
+}
+
+/**
+ * Walls of the Glow: a pre-war shelter for important people, gone to ruin. From the top: a dark bronze cornice; ivory enamel steel
+ * panels (two per cell) in frames, with fine art-deco fluting and thin brass lines, brass pilasters between them; a polished brass
+ * chair rail; a walnut wainscot with raised panels; a black marble plinth. Over it all: rust streaks running down from the cornice
+ * and the rail, corrosion blooms where the enamel has flaked off to bare grey steel, green verdigris on the brass, water stains
+ * on the wood, soot by the floor.
+ */
+function glowLuxWall(): Texture {
+  const body = fbm(1611, 4, 4);
+  const streak = noise(1612, 40, 2);
+  const run = fbm(1613, 3, 3);
+  const bloom = fbm(1614, 6, 4);
+  const verd = fbm(1615, 8, 3);
+  const grain = fbm(1616, 2, 4);
+  const fine = noise(1617, 128, 6);
+  const stain = fbm(1618, 4, 3);
+  const vein = fbm(1619, 5, 4);
+  const crack = cracks(1620, 3, 0.0035, 0.3);
+  return build((x, y, p) => {
+    const px = x & 63;
+    const panel = x >> 6;
+    const n = body(x, y);
+    // Rust streaks from the cornice (strongest just below it) and from the rail (on the wood).
+    const s = streak(x, 0) * 0.7 + run(x, y) * 0.3;
+    const rustUpper = smooth(0.58, 0.8, s) * Math.max(0, 1 - (y - 6) / 70) ** 0.7;
+    const rustLower = smooth(0.62, 0.84, streak(x + 17, 0)) * Math.max(0, 1 - (y - 80) / 40);
+    const v = smooth(0.62, 0.8, verd(x, y));
+    const c = crack(x, y);
+    if (y < 6) {
+      // Cornice: bronze molding, a light bead on top, a shadow under it.
+      const shine = y === 1 ? 0.75 : y === 2 ? 0.55 : 0.25;
+      brass(p, shine, v * 0.8, (y === 5 ? 0.45 : 0.85) + n * 0.2);
+      p.h = y === 5 ? 0.3 : 0.9 - y * 0.05;
+      return;
+    }
+    if (y < 75) {
+      // Brass pilaster between the panels.
+      if (px < 3) {
+        brass(p, px === 1 ? 0.8 : 0.45, v, 0.8 + n * 0.25);
+        p.h = px === 1 ? 0.95 : 0.8;
+        return;
+      }
+      const fx = px - 3;
+      const frame = fx < 4 || fx > 56 || y < 10 || y > 70;
+      const groove = fx === 4 || fx === 56 || y === 10 || y === 70;
+      // Ivory enamel; fluting every 6 px inside the frame; brass lines across the panel.
+      let k = 0.86 + n * 0.14;
+      let h = 0.65;
+      if (groove) (k *= 0.62), (h = 0.35);
+      else if (!frame && (fx - 5) % 6 === 0) (k *= 0.9), (h = 0.55);
+      else if (frame) (k *= 0.96), (h = 0.75);
+      const line = !frame && (y === 18 || y === 62);
+      // Corrosion bloom: flaked enamel — bare grey steel ringed by rust.
+      const b = bloom(x, y + panel * 31);
+      const bare = smooth(0.7, 0.76, b);
+      const ring = smooth(0.62, 0.7, b) * (1 - bare);
+      if (line && bare < 0.5) {
+        brass(p, 0.6, v, 0.9);
+        p.h = 0.8;
+        return;
+      }
+      let r = 228;
+      let g = 216;
+      let bl = 190;
+      // Age: yellowed enamel, soot near the top.
+      const age = stain(x, y);
+      r -= age * 26;
+      g -= age * 30;
+      bl -= age * 36;
+      const rust = Math.min(1, rustUpper + ring * 0.9);
+      r = lerp(r, 148, rust);
+      g = lerp(g, 74, rust);
+      bl = lerp(bl, 34, rust);
+      if (bare > 0) {
+        const steel = 0.55 + fine(x, y) * 0.25;
+        r = lerp(r, 120 * steel + 40, bare);
+        g = lerp(g, 116 * steel + 36, bare);
+        bl = lerp(bl, 112 * steel + 34, bare);
+        h -= bare * 0.2;
+      }
+      put(p, r, g, bl, k * (1 - c * 0.35));
+      p.h = h - c * 0.1;
+      return;
+    }
+    if (y < 80) {
+      // Chair rail: polished brass, a bright top edge.
+      brass(p, y === 75 ? 0.95 : y === 76 ? 0.8 : y === 79 ? 0.3 : 0.6, v, (y === 79 ? 0.55 : 0.92) + n * 0.1);
+      p.h = y === 79 ? 0.4 : 0.95;
+      return;
+    }
+    if (y < 120) {
+      // Walnut wainscot: a frame (stiles and rails) and a raised panel in it; grain runs along the boards.
+      const wy = y - 80;
+      const stile = px < 6 || px > 57 || wy < 4 || wy > 35;
+      const bevel = !stile && (px < 9 || px > 54 || wy < 7 || wy > 32);
+      const gr = grain(x * 0.25, y * 3) * 0.6 + fine(x, y * 0.2) * 0.4;
+      let k = 0.7 + gr * 0.45 + n * 0.12;
+      if (stile) k *= 0.82;
+      else if (bevel) k *= px < 9 || wy < 7 ? 1.12 : 0.72;
+      const wet = smooth(0.6, 0.82, stain(x + 40, y)) * 0.6 + rustLower * 0.7;
+      const r = lerp(104, 58, Math.min(1, wet));
+      const g = lerp(64, 34, Math.min(1, wet));
+      const bl = lerp(40, 22, Math.min(1, wet));
+      put(p, r, g, bl, k * (1 - c * 0.3));
+      p.h = stile ? 0.7 : bevel ? 0.6 : 0.8;
+      return;
+    }
+    // Black marble plinth with pale veins; a soot line on top.
+    const vv = 1 - Math.abs(vein(x, y * 2) * 2 - 1);
+    const veinK = smooth(0.955, 0.99, vv);
+    const top = y === 120;
+    put(p, lerp(30, 150, veinK), lerp(30, 146, veinK), lerp(32, 138, veinK), (top ? 0.6 : 0.9) + n * 0.15);
+    p.h = top ? 0.4 : 0.7;
+  }, 1.1);
+}
+
+/**
+ * Floor of the Glow: polished marble in a checkerboard — cream with grey veins and dark green with pale ones — two by two per cell,
+ * brass inlay strips in the joints. Cracked slabs, rust-brown stains from leaking pipes, grime in the corners, scratches.
+ */
+function glowLuxFloor(): Texture {
+  const veinA = fbm(1631, 4, 5);
+  const veinB = fbm(1632, 5, 5);
+  const body = fbm(1633, 6, 3);
+  const stain = fbm(1634, 3, 4);
+  const grime = fbm(1635, 8, 3);
+  const verd = fbm(1636, 10, 3);
+  const crack = cracks(1637, 3, 0.004, 0.45);
+  const veinC = fbm(1639, 9, 4);
+  const scratch = noise(1638, 64, 4);
+  return build((x, y, p) => {
+    const tx = x & 63;
+    const ty = y & 63;
+    const dark = ((x >> 6) + (y >> 6)) % 2 === 1;
+    const n = body(x, y);
+    // Brass strip in the joint: 2 px with a dark gap beside it.
+    if (tx < 2 || ty < 2) {
+      brass(p, tx === 0 || ty === 0 ? 0.7 : 0.4, smooth(0.6, 0.8, verd(x, y)), 0.85 + n * 0.15);
+      p.h = 0.75;
+      return;
+    }
+    if (tx === 2 || ty === 2) {
+      put(p, 30, 26, 22, 0.8);
+      p.h = 0.2;
+      return;
+    }
+    const w = (dark ? veinB : veinA)(x * 0.8 + y * 0.3, y * 0.9);
+    const thin = veinC(x + w * 30, y - w * 20);
+    const vein = Math.max(smooth(0.955, 0.99, 1 - Math.abs(w * 2 - 1)), smooth(0.97, 0.995, 1 - Math.abs(thin * 2 - 1)) * 0.6);
+    let r: number;
+    let g: number;
+    let b: number;
+    if (dark) {
+      r = lerp(30, 140, vein);
+      g = lerp(54, 164, vein);
+      b = lerp(46, 146, vein);
+    } else {
+      r = lerp(228, 140, vein);
+      g = lerp(220, 132, vein);
+      b = lerp(202, 122, vein);
+    }
+    const st = smooth(0.6, 0.85, stain(x, y));
+    r = lerp(r, 128, st * 0.8);
+    g = lerp(g, 70, st * 0.8);
+    b = lerp(b, 36, st * 0.8);
+    const gm = smooth(0.55, 0.8, grime(x, y));
+    const c = crack(x, y);
+    const sc = scratch(x, y) > 0.985 ? 0.15 : 0;
+    const k = (0.82 + n * 0.18) * (1 - gm * 0.3) * (1 - c * 0.45) * (1 + sc);
+    put(p, r, g, b, k);
+    p.h = 0.7 - c * 0.12;
+  }, 0.9);
+}
+
+/**
+ * Ceiling of the Glow: coffers — square recesses (two by two per cell) between cream beams edged with brass, a small brass rosette in
+ * the middle of each; brown water stains and rust drips along the brass, soot.
+ */
+function glowLuxCeiling(): Texture {
+  const body = fbm(1651, 4, 4);
+  const water = fbm(1652, 3, 4);
+  const soot = fbm(1653, 4, 3);
+  const verd = fbm(1654, 8, 3);
+  return build((x, y, p) => {
+    const cx = x & 63;
+    const cy = y & 63;
+    const n = body(x, y);
+    const beam = cx < 8 || cy < 8;
+    const edge = cx === 8 || cy === 8 || cx === 9 || cy === 9;
+    const d = Math.hypot(cx - 36, cy - 36);
+    const v = smooth(0.62, 0.8, verd(x, y));
+    if (edge) {
+      brass(p, cx === 8 || cy === 8 ? 0.7 : 0.4, v, 0.85);
+      p.h = 0.7;
+      return;
+    }
+    if (!beam && d < 5) {
+      brass(p, d < 2 ? 0.85 : 0.5, v, 0.9);
+      p.h = 0.6 + dome(d, 5) * 0.4;
+      return;
+    }
+    // Beams light, recesses a little darker and shaded toward their far edges.
+    let k = beam ? 0.86 : 0.68 + (cx + cy) / 128 * 0.12;
+    k *= 0.88 + n * 0.16;
+    const wet = smooth(0.58, 0.82, water(x, y));
+    const s = smooth(0.62, 0.85, soot(x, y));
+    put(p, lerp(222, 140, wet), lerp(208, 98, wet), lerp(180, 60, wet), k * (1 - s * 0.35));
+    p.h = beam ? 0.85 : 0.45;
+  }, 1);
+}
+
 /**
  * Walls of the Military Base (the original's mmb* pieces): light grey vertical steel sheets, two per cell, riveted along the edges,
  * a band in the middle and a diagonal cross brace on some sheets; at the bottom — a yellow-and-black hazard stripe, dirt above it;
@@ -1657,6 +1881,9 @@ export function townTextures(): Record<TownTexture, () => Texture> {
     glowTile: () => varied(glowTile),
     glowGrate: () => varied(glowGrate),
     glowCeiling: () => varied(glowCeiling),
+    glowLuxWall: () => varied(glowLuxWall),
+    glowLuxFloor: () => varied(glowLuxFloor),
+    glowLuxCeiling: () => varied(glowLuxCeiling),
     baseWall: () => varied(baseWall),
     baseFloor: () => varied(baseFloor),
   };

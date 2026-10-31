@@ -316,6 +316,8 @@ export class Creature {
   talks = false;
   /** Role in the squad (assigned by the scene): pin the hero down with fire or flank. */
   role: 'suppress' | 'flank' | null = null;
+  /** Never retreats, however badly wounded (set by the scene from the original's AI packet: resources.ts -> fightsToDeath). */
+  fightsToDeath = false;
   /** Agility (from the fighter by prototype): how often it dodges the crosshair. */
   agility = 5;
   /** How many seconds in a row the hero's crosshair has been on it (set by the scene every frame; 0 means not aimed at). */
@@ -1196,6 +1198,7 @@ export class Creature {
 
   private shouldFlee(): boolean {
     if (this.panic > 0) return true;
+    if (this.fightsToDeath) return false;
     // Leader alive nearby or enraged: does not retreat.
     if (this.enraged || (this.leader?.alive && Math.hypot(this.leader.x - this.x, this.leader.y - this.y) < 14)) return false;
     const share = this.hp / this.stats.maxHp;

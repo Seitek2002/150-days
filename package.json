@@ -1,7 +1,7 @@
 {
   "name": "150-days",
   "productName": "150 Days",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "description": "\"150 Days\" — a fan-made first-person game inspired by Fallout 1, in the style of Doom 1. Requires the original Fallout 1.",
   "private": true,
   "type": "module",

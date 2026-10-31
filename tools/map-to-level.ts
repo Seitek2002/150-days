@@ -112,6 +112,13 @@ export interface LevelConfig {
   insideWall?: { from: string; to: string };
   /** Open doorways without a door (a missing hex in a wall line) — the houses of Shady Sands. */
   doorways?: boolean;
+  /**
+   * Seal houses (client, 2026-10-31: in the Hub you could walk into houses through holes, not only through doors): a floor cell in a
+   * house's wall line at the edge of the original's roof, through which the street leads under the roof past the doors, becomes a wall. The
+   * holes come from our coarser cell (a wall that only grazes a cell leaves it empty) and from passages cut to objects stuck in double walls.
+   * A cell is sealed only if it sits between two walls along the wall line, and only if nothing reachable before (through doors) is cut off.
+   */
+  sealHouses?: boolean;
   /** Fence posts: wall pieces with this picture are a cell slightly taller than the wall with its own texture (LevelDef.towers). */
   posts?: { art: RegExp; texture: string; height: number };
   /** Round windows: cells with wall pieces of this picture are not a wall but a post with a round window (texture is a wall with a hole). */
@@ -1190,6 +1197,244 @@ if (cfg.chainFences) {
   out.push(`  fences: { texture: '${texture}', height: ${height}, rows: [`, ...rows.map((r) => `    '${r.join('')}',`), '  ] },');
   warnings.push(`chain-link fence: ${rows.reduce((n, r) => n + r.filter((c) => c === 'F').length, 0)} cells`);
 }
+/**
+ * sealHouses: holes in house walls. A hole starts at a pair of neighbouring floor cells — street u (not under the original's roof) and r under it,
+ * neither a door. Along the step u→r (u itself and up to three cells further, the roof overhangs the street) the first cell in a wall line
+ * is found: a run of 1–3 floor cells across the step bounded by walls or doors on both ends; the run is filled with the wall's letter. Each fill is kept only if every floor cell reachable from the entrances through doors before stays
+ * reachable (an alley between two houses, a house whose only way in was this hole). Repeats until nothing changes.
+ */
+function sealHouseHoles(
+  w: number,
+  h: number,
+  at: (x: number, y: number) => number,
+  wallAt: (x: number, y: number) => boolean,
+  floorAt: (x: number, y: number) => boolean,
+  roofed: (x: number, y: number) => boolean,
+  passage: ReadonlySet<number>,
+  taken: ReadonlySet<number>,
+): { done: string[]; skipped: string[] } {
+  // From which entrances each cell can be reached (a bit per entrance): a fill must not cut a cell off from any of them.
+  const reachable = (): Uint32Array => {
+    const seen = new Uint32Array(w * h);
+    entries.forEach((e, n) => {
+      const bit = 1 << Math.min(31, n);
+      const queue = [at(Math.floor(e.x), Math.floor(e.y))];
+      while (queue.length) {
+        const i = queue.pop()!;
+        const x = i % w;
+        const y = Math.floor(i / w);
+        if (!floorAt(x, y) || seen[i]! & bit) continue;
+        seen[i] = seen[i]! | bit;
+        queue.push(at(x + 1, y), at(x - 1, y), at(x, y + 1), at(x, y - 1));
+      }
+    });
+    return seen;
+  };
+  let before = reachable();
+  const done: string[] = [];
+  const skipped = new Set<string>();
+  const tried = new Set<number>();
+  /**
+   * Fill the cells with a wall letter; undo if anything reachable before (through doors) is cut off from any entrance — except an empty
+   * pocket of up to four cells left behind the filled cells (a nook of a house open only through the hole): it is walled up too.
+   */
+  const tryFill = (run: [number, number][], letter: string, was: string[]): boolean => {
+    if (run.some(([cx, cy]) => passage.has(at(cx, cy)) || taken.has(at(cx, cy)))) return false;
+    for (const [cx, cy] of run) G[cy]![cx] = letter;
+    let after = reachable();
+    const cells = new Set(run.map(([cx, cy]) => at(cx, cy)));
+    const lost: number[] = [];
+    for (let k = 0; k < before.length; k++) if (!cells.has(k) && before[k]! & ~after[k]!) lost.push(k);
+    const pocket = lost.length > 0 && lost.length <= 4 && lost.every((k) => after[k] === 0 && !taken.has(k) && !passage.has(k));
+    if (lost.length && !pocket) {
+      run.forEach(([cx, cy], m) => (G[cy]![cx] = was[m]!));
+      return false;
+    }
+    for (const k of lost) {
+      G[Math.floor(k / w)]![k % w] = letter;
+      done.push(`${k % w},${Math.floor(k / w)}`);
+    }
+    if (lost.length) after = reachable();
+    before = after;
+    for (const [cx, cy] of run) done.push(`${cx},${cy}`);
+    return true;
+  };
+  // A wall-line gap: from cell c across the step (along p), a run of 1–3 floor cells bounded by walls or doors on both ends.
+  const solid = (x: number, y: number) => wallAt(x, y) || passage.has(at(x, y));
+  const gapAt = (cx: number, cy: number, px: number, py: number): [number, number][] | null => {
+    const run: [number, number][] = [[cx, cy]];
+    for (const sign of [1, -1]) {
+      let k = 1;
+      for (; k <= 3; k++) {
+        const x = cx + px * k * sign;
+        const y = cy + py * k * sign;
+        if (solid(x, y)) break;
+        if (!floorAt(x, y)) return null;
+        run.push([x, y]);
+      }
+      if (k > 3) return null;
+    }
+    return run.length <= 3 ? run : null;
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!floorAt(x, y) || roofed(x, y) || passage.has(at(x, y))) continue;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const rx = x + dx;
+          const ry = y + dy;
+          if (!floorAt(rx, ry) || !roofed(rx, ry) || passage.has(at(rx, ry))) continue;
+          // The gap may be at the roof's edge or a step or two inside it (the original's roof overhangs the street by a cell).
+          let run: [number, number][] | null = null;
+          for (let k = 0; k <= 3 && !run; k++) {
+            const cx = x + dx * k;
+            const cy = y + dy * k;
+            if (!floorAt(cx, cy) || passage.has(at(cx, cy))) break;
+            run = gapAt(cx, cy, dy, dx);
+          }
+          if (!run || run.some(([cx, cy]) => tried.has(at(cx, cy)) || taken.has(at(cx, cy)))) {
+            if (!run) skipped.add(`${rx},${ry}`);
+            continue;
+          }
+          for (const [cx, cy] of run) tried.add(at(cx, cy));
+          const was = run.map(([cx, cy]) => G[cy]![cx]!);
+          // The wall letter of the run's end (a door end takes the wall beyond the run's other end).
+          const [ex, ey] = run.reduce((a, b) => (a[0] * dy + a[1] * dx <= b[0] * dy + b[1] * dx ? a : b));
+          const end = wallAt(ex - dy, ey - dx) ? G[ey - dx]![ex - dy]! : null;
+          const [fx, fy] = run.reduce((a, b) => (a[0] * dy + a[1] * dx >= b[0] * dy + b[1] * dx ? a : b));
+          const letter = end ?? (wallAt(fx + dy, fy + dx) ? G[fy + dx]![fx + dy]! : '#');
+          if (!tryFill(run, letter, was)) {
+            skipped.add(`${rx},${ry}`);
+            continue;
+          }
+          skipped.delete(`${rx},${ry}`);
+          changed = true;
+        }
+      }
+    }
+  }
+  // Second pass, by doors (the original's roof is shifted and misses some houses, the Hub's old-town warehouses): a door in a wall line
+  // whose two sides are joined by a path around it — along that path the first wall-line gap is sealed.
+  const around = (from: number, to: number): number[] | null => {
+    const prev = new Map<number, number>([[from, -1]]);
+    const queue = [from];
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q]!;
+      if (i === to) {
+        const path: number[] = [];
+        for (let k = i; k >= 0; k = prev.get(k)!) path.push(k);
+        return path.reverse();
+      }
+      const x = i % w;
+      const y = Math.floor(i / w);
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+        const j = at(nx, ny);
+        if (!floorAt(nx, ny) || passage.has(j) || prev.has(j)) continue;
+        prev.set(j, i);
+        queue.push(j);
+      }
+    }
+    return null;
+  };
+  const stuck = new Set<number>();
+  for (let guard = 0; guard < 200; guard++) {
+    let sealedOne = false;
+    for (const d of passage) {
+      if (stuck.has(d)) continue;
+      const x = d % w;
+      const y = Math.floor(d / w);
+      // A door in a straight wall line: floor on two opposite sides, walls on the other two.
+      const open = (sx: number, sy: number) => floorAt(sx, sy) && !passage.has(at(sx, sy));
+      const sides = open(x + 1, y) && open(x - 1, y) && wallAt(x, y + 1) && wallAt(x, y - 1) ? ([[x + 1, y], [x - 1, y]] as const) : open(x, y + 1) && open(x, y - 1) && wallAt(x + 1, y) && wallAt(x - 1, y) ? ([[x, y + 1], [x, y - 1]] as const) : null;
+      if (!sides) continue;
+      const path = around(at(sides[0]![0], sides[0]![1]), at(sides[1]![0], sides[1]![1]));
+      if (!path) continue;
+      let fixed = false;
+      for (let n = 1; n < path.length && !fixed; n++) {
+        const a = path[n - 1]!;
+        const b = path[n]!;
+        const sx = (b % w) - (a % w);
+        const sy = Math.floor(b / w) - Math.floor(a / w);
+        const run = gapAt(b % w, Math.floor(b / w), sy, sx);
+        if (!run || run.some(([cx, cy]) => passage.has(at(cx, cy)))) continue;
+        const was = run.map(([cx, cy]) => G[cy]![cx]!);
+        const [ex, ey] = run.reduce((p, q) => (p[0] * sy + p[1] * sx <= q[0] * sy + q[1] * sx ? p : q));
+        const [fx, fy] = run.reduce((p, q) => (p[0] * sy + p[1] * sx >= q[0] * sy + q[1] * sx ? p : q));
+        const letter = wallAt(ex - sy, ey - sx) ? G[ey - sx]![ex - sy]! : wallAt(fx + sy, fy + sx) ? G[fy + sx]![fx + sy]! : '#';
+        fixed = tryFill(run, letter, was);
+      }
+      // No straight gap on the way: an open corner, where one wall ends and the next one goes on a diagonal step further (the walls of two
+      // sides do not meet). The path cell at the end of a wall with a wall diagonally across from that end joins them.
+      for (let n = 1; n < path.length - 1 && !fixed; n++) {
+        const cx = path[n]! % w;
+        const cy = Math.floor(path[n]! / w);
+        const end = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const).find(
+          ([ux, uy]) => wallAt(cx + ux, cy + uy) && !wallAt(cx - ux, cy - uy) && (wallAt(cx - ux + uy, cy - uy + ux) || wallAt(cx - ux - uy, cy - uy - ux)),
+        );
+        if (!end) continue;
+        fixed = tryFill([[cx, cy]], G[cy + end[1]]![cx + end[0]]!, [G[cy]![cx]!]);
+      }
+      if (fixed) sealedOne = true;
+      else {
+        stuck.add(d);
+        skipped.add(`door ${x},${y}`);
+      }
+    }
+    if (!sealedOne) break;
+  }
+  // Third pass, dead ends: a gap between two walls, from the street (reachable from the entrances without doors), that leads only into an
+  // empty nook of up to four cells (no door, nothing in it) — a hole into a corner of a house cut off by a partition. tryFill walls up the
+  // gap and the nook behind it. Nooks inside houses (behind doors: a toilet alcove) are left alone.
+  const street = new Uint8Array(w * h);
+  {
+    const queue = entries.map((e) => at(Math.floor(e.x), Math.floor(e.y)));
+    while (queue.length) {
+      const i = queue.pop()!;
+      const cx = i % w;
+      const cy = Math.floor(i / w);
+      if (!floorAt(cx, cy) || street[i] || passage.has(i)) continue;
+      street[i] = 1;
+      queue.push(at(cx + 1, cy), at(cx - 1, cy), at(cx, cy + 1), at(cx, cy - 1));
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!floorAt(x, y) || passage.has(at(x, y)) || taken.has(at(x, y))) continue;
+      for (const [px, py] of [[1, 0], [0, 1]] as const) {
+        if (!wallAt(x + px, y + py) || !wallAt(x - px, y - py)) continue;
+        // The two sides of the gap across the wall line: one of them must be a small closed nook.
+        for (const side of [1, -1]) {
+          const start = at(x + py * side, y + px * side);
+          const outer = at(x - py * side, y - px * side);
+          if (!floorAt(start % w, Math.floor(start / w)) || !street[outer]) continue;
+          const nook = new Set([start]);
+          const queue = [start];
+          let closed = true;
+          for (let q = 0; q < queue.length && closed; q++) {
+            const i = queue[q]!;
+            if (passage.has(i) || taken.has(i)) closed = false;
+            const cx = i % w;
+            const cy = Math.floor(i / w);
+            for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]] as const) {
+              const j = at(nx, ny);
+              if ((nx === x && ny === y) || !floorAt(nx, ny) || nook.has(j)) continue;
+              nook.add(j);
+              queue.push(j);
+              if (nook.size > 4) closed = false;
+            }
+          }
+          if (!closed) continue;
+          const letter = G[y + py]![x + px]!;
+          tryFill([[x, y], ...[...nook].map((i) => [i % w, Math.floor(i / w)] as [number, number])], letter, [G[y]![x]!, ...[...nook].map((i) => G[Math.floor(i / w)]![i % w]!)]);
+          break;
+        }
+      }
+    }
+  }
+  return { done, skipped: [...skipped].filter((k) => !done.includes(k)) };
+}
+
 // Floor from the original's tiles (paint) and flat roofs from the roof layer (roofs): as letters along the level grid rows. A floor tile is
 // a 2×2 square of hexes, its middle is hex (2·row+1, 2·column+1).
 if (cfg.paint || cfg.roofs) {
@@ -1240,6 +1485,21 @@ if (cfg.paint || cfg.roofs) {
     for (const d of doorways) {
       const [gx, gy] = d.split(',').map(Number) as [number, number];
       passage.add(at(gx - ox, gy - oy));
+    }
+    if (cfg.sealHouses) {
+      // Only real doors are kept: open doorways (doorways) found in slanted walls are holes too, unless one is the only way in.
+      const doors = new Set<number>();
+      // Cells holding an item, a critter, a body, an elevator or an exit (where the level places them) are never filled; furniture is
+      // moved aside by the game itself.
+      const taken = new Set<number>();
+      for (const o of exported) if (o.kind === 'door') doors.add(at(Math.floor(o.gx - ox), Math.floor(o.gy - oy)));
+      for (const line of objectLines) {
+        const m = /kind: '(\w+)'.*?\bx: ([\d.]+), y: ([\d.]+)/.exec(line);
+        if (m && m[1] !== 'door') taken.add(at(Math.floor(Number(m[2])), Math.floor(Number(m[3]))));
+      }
+      const sealed = sealHouseHoles(w, h, at, wallAt, floorAt, (x, y) => roofRows[y]?.[x] === '#', doors, taken);
+      warnings.push(`sealHouses: ${sealed.done.length} holes sealed (${sealed.done.join(' ')}); left open (would cut something off or not between walls): ${sealed.skipped.join(' ') || 'none'}`);
+      if (sealed.done.length) for (let y = 0; y < h; y++) out[gridAt + y] = `    '${G[y]!.join('')}',`;
     }
     const outside = new Uint8Array(w * h);
     const queue = entries.map((e) => at(Math.floor(e.x), Math.floor(e.y)));

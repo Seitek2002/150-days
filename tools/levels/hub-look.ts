@@ -27,4 +27,5 @@ export const HUB_LOOK: Partial<LevelConfig> = {
   // The roof storey above a wall, seen from outside, is the top of the facade: a parapet with a cornice and grass on houses, siding on warehouses.
   roofEdges: { '#': 'hubParapet', D: 'wareSiding' },
   doorways: true,
+  sealHouses: true,
 };

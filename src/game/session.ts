@@ -505,7 +505,8 @@ export class Session implements SceneHost {
 
   /**
    * A companion has shot all his ammo: takes another weapon from his items (one with ammo; none — a knife, none of that either —
-   * fists) and says so. Completely out of ammo — asks the hero for some (the dialogue will get "Take some ammo").
+   * fists) and says so. Completely out of ammo — only shouts about it: after the fight he comes to ask for ammo (or money for it) in the
+   * dialogue window (companion-talk.ts → askAmmo; client, 2026-10-31: a request should not be just a line of text).
    */
   async companionRanOut(creature: Creature): Promise<void> {
     const m = this.memberOf(creature);
@@ -521,9 +522,7 @@ export class Session implements SceneHost {
       // Out of thrown weapons: doesn't ask for ammo — after the fight he picks up what he threw himself.
       text = now ? tf('compNoKnivesMelee', { weapon: this.res.itemName(now) }) : t('compNoKnives');
     } else {
-      const gun = before ? await this.res.item(before) : null;
-      const ammo = gun?.weapon && gun.weapon.ammoPid > 0 ? await this.res.item(gun.weapon.ammoPid).catch(() => null) : null;
-      text = ammo ? tf('compNoAmmo', { ammo: this.res.itemName(ammo) }) : t('compNoAmmoAny');
+      text = t('compOutOfAmmo');
       if (now) text += ' ' + tf('compTakeMelee', { weapon: this.res.itemName(now) });
       m.outOfAmmo = true;
     }

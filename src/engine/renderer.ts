@@ -5,7 +5,7 @@ import { buildLightMap, LAMP_SCALE, sampleGrid, wallShade, type DynamicLight, ty
 import { craterEdge, depthAt, LIP, SHAFT } from './crater.ts';
 import { EXIT_MARK, GLOW, wallAt, wallFaceKey, type Block, type Door, type FloorMark, type Level, type Outdoor, type Rgb } from './level.ts';
 import { CLOUD_HEIGHT, CLOUD_SCALE, cloudAt, moonAt, mountainsAt, starAt } from './sky.ts';
-import { CONSTELLATIONS, DEEP_SKY, GALACTIC_POLE, SKY_LATITUDE, skyPosition, STAR_INDEX, STARS } from './stars.ts';
+import { CLUSTER_STARS, CONSTELLATIONS, DEEP_SKY, GALACTIC_POLE, SKY_LATITUDE, skyPosition, STAR_INDEX, STARS } from './stars.ts';
 import { EMISSIVE, hash, TEX, variantIndex, variantOf, type Texture, type TextureName } from './textures.ts';
 import { panelPicture, type PanelName, type PanelPicture } from './cathedral-textures.ts';
 import type { LevelPanel, LevelRound } from '../world/defs.ts';
@@ -73,11 +73,15 @@ const STAR_TINTS: readonly (readonly [number, number, number])[] = [
   [1.15, 0.86, 0.58],
   [1.2, 0.72, 0.52],
 ];
-/** Constellation lines: color and how far to the sides of the view a star is still projected (radians). */
+/** Constellation lines: color. */
 const CONSTELLATION_LINE = { r: 95, g: 130, b: 185 };
-const STAR_VIEW = 1.25;
+/** Mountains are never higher than this (radians): above it a sky point needs no mountain lookup. */
+const HILLS_TOP = 0.25;
+const NO_HILLS = { far: 0, near: 0 } as const;
 /** Brightness of small background stars with the real sky (without it — 200). */
 const FIELD_STAR = 120;
+/** Brightness of the faint stars that make up the Milky Way's grain. */
+const MILKY_GRAIN = 70;
 /** Constellation lines by star index (stars.ts). */
 const CONSTELLATION_LINES = CONSTELLATIONS.map((c) => c.lines.map(([a, b]) => [STAR_INDEX.get(a)!, STAR_INDEX.get(b)!] as const));
 /**
@@ -289,12 +293,6 @@ export class Renderer {
   private depth!: Float32Array;
   /** Which wall is visible in each column — to know what a bullet that missed its target hit. */
   private wallTex!: (TextureName | null)[];
-  /** View direction in each column (for the sky). */
-  private colAz!: Float32Array;
-  private colCos!: Float32Array;
-  private colSin!: Float32Array;
-  private colFar!: Float32Array;
-  private colNear!: Float32Array;
   /** Which side of which cell is visible in a column (wallFaceKey; −1 — a door or nothing) and where on it (0..1). */
   private wallKey!: Int32Array;
   private wallU!: Float32Array;
@@ -389,6 +387,23 @@ export class Renderer {
   private readonly starY = new Float32Array(STARS.length);
   private readonly starOn = new Uint8Array(STARS.length);
   private starSidereal = NaN;
+  /** Where the cluster stars are (CLUSTER_STARS), recounted when the sidereal time changes. */
+  private readonly clusterAz = new Float32Array(CLUSTER_STARS.length);
+  private readonly clusterEl = new Float32Array(CLUSTER_STARS.length);
+  private clusterSidereal = NaN;
+  /**
+   * How far the view is raised, as an angle (radians). Walls and floors slide with the view (as in Doom), but the sky turns with
+   * the head in true perspective (client, 2026-10-30: the Milky Way could not be seen): looking straight up, the frame holds about 60° of
+   * sky instead of a 5° strip stretched tenfold, in which the Milky Way filled the whole frame evenly and stars became streaks. The horizon
+   * row is the same for both, so the sky meets the ground where the walls and floor expect it.
+   */
+  private skyPitch = 0;
+  private pitchCos = 1;
+  private pitchSin = 0;
+  private skyTurn = 0;
+  /** Direction of a frame point in the sky (skyDir): azimuth like the view angle and elevation, radians. */
+  private dirAz = 0;
+  private dirEl = 0;
   private lightMap: LightMap | null = null;
   private lightMapLevel: Level | null = null;
   private lightMapVersion = -1;
@@ -406,11 +421,6 @@ export class Renderer {
     this.frame = new Uint32Array(this.image.data.buffer);
     this.depth = new Float32Array(VIEW_W);
     this.wallTex = new Array<TextureName | null>(VIEW_W).fill(null);
-    this.colAz = new Float32Array(VIEW_W);
-    this.colCos = new Float32Array(VIEW_W);
-    this.colSin = new Float32Array(VIEW_W);
-    this.colFar = new Float32Array(VIEW_W);
-    this.colNear = new Float32Array(VIEW_W);
     this.wallKey = new Int32Array(VIEW_W).fill(-1);
     this.wallU = new Float32Array(VIEW_W);
     this.wallFrom = new Int16Array(VIEW_W);
@@ -470,6 +480,10 @@ export class Renderer {
     if (this.preparedLevel !== level || this.preparedBlocks !== (level.blocksVersion ?? 0)) this.prepareTextures(level);
     this.proj = PROJ / this.widen;
     this.horizon = CENTER + Math.max(MIN_PITCH, Math.min(MAX_PITCH, cam.pitch)) * RES;
+    this.skyPitch = Math.atan((this.horizon - CENTER) / this.proj);
+    this.pitchCos = Math.cos(this.skyPitch);
+    this.pitchSin = Math.sin(this.skyPitch);
+    this.skyTurn = ((cam.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     this.eye = Math.max(0.06, Math.min(0.9, EYE + Math.max(0, cam.z ?? 0)) - (cam.eyeDrop ?? 0));
     // Underground, where the original has light sources, they light the rooms: the overall light fades faster (Opus's decision).
     // lightBoost — light carried by the hero (a lit flare): you see further while it burns.
@@ -728,21 +742,13 @@ export class Renderer {
    * A sky row: color by height above the horizon, clouds at CLOUD_HEIGHT, the sun with its glow, stars at night,
    * two rows of mountains at the bottom (the far ones in haze). Walls cover the sky.
    */
-  private skyRow(y: number, offset: number, sky: Outdoor, cam: Camera): void {
-    if (this.skyAngle !== cam.angle) this.skyColumns(cam);
+  private skyRow(y: number, sky: Outdoor): void {
     const row = y * VIEW_W;
-    const e = Math.atan(offset / this.proj);
-    const t = Math.min(1, offset / (110 * RES));
-    const baseR = sky.skyHorizon.r + (sky.skyTop.r - sky.skyHorizon.r) * t;
-    const baseG = sky.skyHorizon.g + (sky.skyTop.g - sky.skyHorizon.g) * t;
-    const baseB = sky.skyHorizon.b + (sky.skyTop.b - sky.skyHorizon.b) * t;
     const light = sky.brightness;
     // Clouds: light by day, horizon-colored at sunset, dark at night.
     const cloudR = (sky.skyHorizon.r * 0.35 + 235 * 0.65) * (0.25 + 0.75 * light);
     const cloudG = (sky.skyHorizon.g * 0.35 + 230 * 0.65) * (0.25 + 0.75 * light);
     const cloudB = (sky.skyHorizon.b * 0.35 + 222 * 0.65) * (0.25 + 0.75 * light);
-    const cloudDist = e > 0.015 ? CLOUD_HEIGHT / Math.tan(e) : 0;
-    const cloudFade = smoothstep(0.015, 0.25, e);
     const drift = sky.clouds ?? 0;
     const stars = Math.max(0, Math.min(1, (0.62 - light) / 0.15));
     // Dark adaptation: background stars, the Milky Way, clouds thin out (by day the clouds stay as they were).
@@ -757,13 +763,8 @@ export class Renderer {
     // Mountains: the color of the ground in haze, the near ones darker and sharper.
     const fog = sky.fog;
     const far = { r: fog.r * 0.78, g: fog.g * 0.76, b: fog.b * 0.8 };
-    const cloudScale = cloudDist * CLOUD_SCALE;
-    const cosE = Math.cos(e);
-    const sinE = Math.sin(e);
-    const sidereal = sky.sidereal;
-    const sunDe = sun ? e - sun.elevation : 0;
-    const sunNear = !!sun && sunUp > 0 && Math.abs(sunDe) < 0.7;
     const near = { r: fog.r * 0.55 * 0.9 + 20, g: fog.g * 0.52 * 0.9 + 16, b: fog.b * 0.5 * 0.9 + 14 };
+    const sidereal = sky.sidereal;
     const frame = this.frame;
     const wallFrom = this.wallFrom;
     const wallTo = this.wallTo;
@@ -772,20 +773,28 @@ export class Renderer {
       const openA = y < (wallFrom[x] ?? 0) || y >= (wallTo[x] ?? 0);
       const openB = x + 1 < VIEW_W && (y < (wallFrom[x + 1] ?? 0) || y >= (wallTo[x + 1] ?? 0));
       if (!openA && !openB) continue;
-      const az = this.colAz[x] ?? 0;
-      const hillNear = this.colNear[x] ?? 0;
-      const hillFar = this.colFar[x] ?? 0;
+      // Each point by its own direction (skyDir): the sky turns with the head, past the zenith is the sky behind it.
+      this.skyDir(x, y);
+      const e = this.dirEl;
+      const az = this.dirAz;
+      const cosAz = Math.cos(az);
+      const sinAz = Math.sin(az);
+      const hills = e < HILLS_TOP ? mountainsAt(az) : NO_HILLS;
       let color: number;
-      if (e < hillNear) {
-        const k = 0.85 + 0.15 * (e / hillNear);
+      if (e < hills.near) {
+        const k = 0.85 + 0.15 * (e / hills.near);
         color = packRgb(near.r * k, near.g * k, near.b * k);
-      } else if (e < hillFar) {
-        const k = 0.9 + 0.1 * (e / hillFar);
+      } else if (e < hills.far) {
+        const k = 0.9 + 0.1 * (e / hills.far);
         color = packRgb(far.r * k, far.g * k, far.b * k);
       } else {
-        let r = baseR;
-        let g = baseG;
-        let b = baseB;
+        // Lighter near the horizon, darker higher up.
+        const t = Math.min(1, (this.proj * Math.tan(Math.min(1.5, Math.max(0, e)))) / (110 * RES));
+        let r = sky.skyHorizon.r + (sky.skyTop.r - sky.skyHorizon.r) * t;
+        let g = sky.skyHorizon.g + (sky.skyTop.g - sky.skyHorizon.g) * t;
+        let b = sky.skyHorizon.b + (sky.skyTop.b - sky.skyHorizon.b) * t;
+        const cosE = Math.cos(e);
+        const sinE = Math.sin(e);
         if (stars > 0 && e > 0.06) {
           // With the real sky the small background stars are dimmer: the bright ones are the catalog stars (drawCatalogStars).
           if (sidereal === undefined) {
@@ -794,23 +803,33 @@ export class Renderer {
             g += s;
             b += s;
           } else if (fieldK > 0 || galaxy > 0) {
-            this.celestial(x, sinE, cosE, sidereal);
+            this.celestial(cosAz, sinAz, sinE, cosE, sidereal);
             const s = starAt(this.cRa * Math.cos(this.cDec), this.cDec) * FIELD_STAR * stars * fieldK;
-            // Milky Way: a light uneven band along the plane of the Galaxy.
+            // Milky Way: a light uneven band along the plane of the Galaxy, crossed by dark dust lanes, and in it — a grain of faint
+            // stars, thicker where the band is brighter (client, 2026-10-31: it looked like haze, not like stars).
             let milk = 0;
+            let grain = 0;
             if (galaxy > 0) {
               const sinB = Math.sin(this.cDec) * SIN_GP + Math.cos(this.cDec) * COS_GP * Math.cos(this.cRa - GALACTIC_POLE.ra);
               const band = Math.exp(-(sinB * sinB) / 0.03);
-              if (band > 0.02) milk = band * (0.35 + cloudAt(this.cRa * 70, this.cDec * 70 + 97) * 1.1) * 30 * galaxy;
+              if (band > 0.02) {
+                const clouds = 0.35 + cloudAt(this.cRa * 70, this.cDec * 70 + 97) * 1.1;
+                const lane = smoothstep(0.55, 0.75, cloudAt(this.cRa * 34 + 11, this.cDec * 34 + 53)) * smoothstep(0.3, 0.8, band);
+                const glow = band * clouds * (1 - 0.75 * lane);
+                milk = glow * 30 * galaxy;
+                const ra = this.cRa * Math.cos(this.cDec);
+                grain = starAt(ra + 41.3, this.cDec + 17.9, Math.min(0.06, 0.045 * glow)) * MILKY_GRAIN * galaxy;
+              }
             }
-            r += s + milk * 0.9;
-            g += s + milk * 0.95;
-            b += s + milk * 1.12;
+            r += s + milk * 0.9 + grain;
+            g += s + milk * 0.95 + grain;
+            b += s + milk * 1.12 + grain * 1.05;
           }
         }
         // The sun's glow — only near it (no point computing further away).
-        if (sunNear) {
-          let daz = Math.abs(az - sun!.azimuth) % (Math.PI * 2);
+        const sunDe = sun ? e - sun.elevation : 0;
+        if (sun && sunUp > 0 && Math.abs(sunDe) < 0.7) {
+          let daz = Math.abs(az - sun.azimuth) % (Math.PI * 2);
           if (daz > Math.PI) daz = Math.PI * 2 - daz;
           if (daz < 0.7) {
             const dx = daz * cosE;
@@ -821,9 +840,10 @@ export class Renderer {
             b += glow * (200 - sunWarm * 130);
           }
         }
-        if (cloudDist > 0) {
-          const n = cloudAt((this.colCos[x] ?? 0) * cloudScale + drift, (this.colSin[x] ?? 0) * cloudScale);
-          const a = smoothstep(0.5, 0.72, n) * 0.9 * cloudFade * clear;
+        if (e > 0.015) {
+          const cloudScale = (CLOUD_HEIGHT / Math.tan(e)) * CLOUD_SCALE;
+          const n = cloudAt(cosAz * cloudScale + drift, sinAz * cloudScale);
+          const a = smoothstep(0.5, 0.72, n) * 0.9 * smoothstep(0.015, 0.25, e) * clear;
           if (a > 0) {
             r += (cloudR * (0.85 + n * 0.3) - r) * a;
             g += (cloudG * (0.85 + n * 0.3) - g) * a;
@@ -838,13 +858,26 @@ export class Renderer {
   }
 
   /**
-   * The celestial sphere point in the direction of column x at altitude e (into cRa, cDec): the small background stars and the Milky
-   * Way are tied to it — they rotate together with the real stars by sidereal time.
+   * Direction of frame point (x, y) in the sky, into dirAz and dirEl: the camera ray turned up by skyPitch (true perspective).
+   * Past the zenith the azimuth turns around by itself (the sky behind the head).
    */
-  private celestial(x: number, sinE: number, cosE: number, sidereal: number): void {
-    // Column direction from north clockwise: cos — minus the world's "south", sin — "east".
-    const cosA = -(this.colSin[x] ?? 0);
-    const sinA = this.colCos[x] ?? 0;
+  private skyDir(x: number, y: number): void {
+    const right = (x + 0.5 - VIEW_W / 2) / this.proj;
+    const up = (CENTER - y) / this.proj;
+    const z = up * this.pitchCos + this.pitchSin;
+    const ahead = this.pitchCos - up * this.pitchSin;
+    this.dirEl = Math.atan2(z, Math.sqrt(ahead * ahead + right * right));
+    this.dirAz = this.skyTurn + Math.atan2(right, ahead);
+  }
+
+  /**
+   * The celestial sphere point in a sky direction (cosine and sine of its azimuth like the view angle, sine and cosine of its elevation;
+   * into cRa, cDec): the small background stars and the Milky Way are tied to it — they rotate together with the real stars by sidereal time.
+   */
+  private celestial(cosAz: number, sinAz: number, sinE: number, cosE: number, sidereal: number): void {
+    // Direction from north clockwise: cos — minus the world's "south", sin — "east".
+    const cosA = -sinAz;
+    const sinA = cosAz;
     const dec = Math.asin(Math.max(-1, Math.min(1, sinE * SIN_LAT + cosE * COS_LAT * cosA)));
     const h = Math.atan2(-cosE * sinA, sinE * COS_LAT - cosE * cosA * SIN_LAT);
     this.cRa = (((sidereal - h) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -864,7 +897,6 @@ export class Renderer {
     if (!sky || sidereal === undefined) return;
     const night = Math.max(0, Math.min(1, (0.62 - sky.brightness) / 0.15));
     if (night <= 0) return;
-    if (this.skyAngle !== cam.angle) this.skyColumns(cam);
     if (this.starSidereal !== sidereal) {
       this.starSidereal = sidereal;
       STARS.forEach((star, i) => {
@@ -878,11 +910,11 @@ export class Renderer {
       let daz = ((this.starAz[i] ?? 0) - cam.angle) % (Math.PI * 2);
       if (daz > Math.PI) daz -= Math.PI * 2;
       else if (daz < -Math.PI) daz += Math.PI * 2;
-      const on = el > 0.005 && Math.abs(daz) < STAR_VIEW;
-      this.starOn[i] = on ? 1 : 0;
-      if (!on) continue;
-      this.starX[i] = VIEW_W / 2 + this.proj * Math.tan(daz) - 0.5;
-      this.starY[i] = this.horizon - this.proj * Math.tan(el);
+      const at = el > 0.005 ? this.skyXY(daz, el) : null;
+      this.starOn[i] = at ? 1 : 0;
+      if (!at) continue;
+      this.starX[i] = at.x - 0.5;
+      this.starY[i] = at.y;
     }
     // How many stars are visible: at first the FIRST_STARS brightest above the horizon; once adapted to the dark — all of them.
     let above = 0;
@@ -896,6 +928,7 @@ export class Renderer {
       this.starShown[i] = 1;
     }
     this.drawDeepSky(cam, sidereal, night);
+    this.drawClusters(cam, sidereal, night);
     const lines = this.constellations * night;
     if (lines > 0.01) {
       for (const pairs of CONSTELLATION_LINES) {
@@ -969,7 +1002,21 @@ export class Renderer {
     this.drawMeteors(cam, night);
     const cx = VIEW_W / 2;
     const cy = VIEW_H / 2;
-    this.skyGaze = night > 0.8 && Math.atan((this.horizon - cy) / this.proj) > 0.3 && this.skyOpen(cx, cy);
+    this.skyGaze = night > 0.8 && this.skyPitch > 0.3 && this.skyOpen(cx, cy);
+  }
+
+  /**
+   * Where in the frame a sky direction is (the inverse of skyDir): daz — from the view direction, el — elevation. Behind the camera — null.
+   */
+  private skyXY(daz: number, el: number): { x: number; y: number } | null {
+    const cosEl = Math.cos(el);
+    const level = cosEl * Math.cos(daz);
+    const right = cosEl * Math.sin(daz);
+    const z = Math.sin(el);
+    const ahead = level * this.pitchCos + z * this.pitchSin;
+    if (ahead < 0.05) return null;
+    const up = z * this.pitchCos - level * this.pitchSin;
+    return { x: VIEW_W / 2 + (this.proj * right) / ahead, y: CENTER - (this.proj * up) / ahead };
   }
 
   /** Where in the frame a sky point is (direction az like the view angle, altitude el); outside the view — null. */
@@ -977,8 +1024,7 @@ export class Renderer {
     let daz = (az - cam.angle) % (Math.PI * 2);
     if (daz > Math.PI) daz -= Math.PI * 2;
     else if (daz < -Math.PI) daz += Math.PI * 2;
-    if (Math.abs(daz) > STAR_VIEW) return null;
-    return { x: VIEW_W / 2 + this.proj * Math.tan(daz), y: this.horizon - this.proj * Math.tan(el) };
+    return this.skyXY(daz, el);
   }
 
   /**
@@ -1020,6 +1066,40 @@ export class Renderer {
     this.frame[at] = packRgb(Math.min(255, (c & 0xff) + r), Math.min(255, ((c >>> 8) & 0xff) + g), Math.min(255, ((c >>> 16) & 0xff) + b));
   }
 
+  /**
+   * Open star clusters (stars.ts → CLUSTER_STARS): a handful of small stars close together. The brightest are seen at once,
+   * the faint ones appear as the eyes adapt to the dark.
+   */
+  private drawClusters(cam: Camera, sidereal: number, night: number): void {
+    if (this.clusterSidereal !== sidereal) {
+      this.clusterSidereal = sidereal;
+      CLUSTER_STARS.forEach((star, i) => {
+        const p = skyPosition(star.ra, star.dec, sidereal);
+        this.clusterAz[i] = p.az;
+        this.clusterEl[i] = p.el;
+      });
+    }
+    const field = adaptStep(ADAPT.field, this.nightAdapt);
+    for (let i = 0; i < CLUSTER_STARS.length; i++) {
+      const el = this.clusterEl[i] ?? 0;
+      if (el < 0.05) continue;
+      const star = CLUSTER_STARS[i]!;
+      const seen = star.mag < 4.5 ? 1 : field;
+      if (seen <= 0.01) continue;
+      const at = this.skyXY((this.clusterAz[i] ?? 0) - cam.angle, el);
+      if (!at) continue;
+      const x = Math.floor(at.x);
+      const y = Math.floor(at.y);
+      if (!this.skyOpen(x, y)) continue;
+      const v = 230 * Math.min(1.6, 1.25 * Math.pow(10, -0.12 * star.mag)) * night * seen * (1 - this.cloudVeil(x, y));
+      if (v < 4) continue;
+      const blue = v * 1.08;
+      // Bright members — one "big point" (RES × RES), faint ones — a single frame point.
+      const size = star.mag < 5 ? RES : 1;
+      for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) this.addSky(x + dx, y + dy, v * 0.92, v * 0.96, blue);
+    }
+  }
+
   /** Distant galaxies and nebulae (stars.ts → DEEP_SKY): soft patches that appear once the eyes adapt to the dark. */
   private drawDeepSky(cam: Camera, sidereal: number, night: number): void {
     const show = adaptStep(ADAPT.galaxies, this.nightAdapt) * night;
@@ -1041,7 +1121,7 @@ export class Renderer {
           if (d >= 1) continue;
           const x = Math.round(c.x) + dx;
           const y = Math.round(c.y) + dy;
-          const k = (Math.exp(-d * 4) - Math.exp(-4)) * 34 * g.shine * show * (1 - this.cloudVeil(x, y));
+          const k = ((Math.exp(-d * 4) - Math.exp(-4)) * 50 + Math.exp(-d * 45) * 90 * g.core) * g.shine * show * (1 - this.cloudVeil(x, y));
           if (k > 0.5) this.addSky(x, y, k * 0.95, k * 0.92, k * 1.05);
         }
       }
@@ -1098,16 +1178,21 @@ export class Renderer {
   private skyOpen(x: number, y: number): boolean {
     if (x < 0 || x >= VIEW_W || y < 0 || y > this.horizon) return false;
     if (y >= (this.wallFrom[x] ?? 0) && y < (this.wallTo[x] ?? 0)) return false;
-    const e = Math.atan((this.horizon - y) / this.proj);
-    return e > 0.02 && e >= (this.colFar[x] ?? 0) && e >= (this.colNear[x] ?? 0);
+    this.skyDir(x, y);
+    const e = this.dirEl;
+    if (e <= 0.02) return false;
+    if (e >= HILLS_TOP) return true;
+    const hills = mountainsAt(this.dirAz);
+    return e >= hills.far && e >= hills.near;
   }
 
   /** How much cloud covers the sky at this frame point (0 — clear, 0.9 — dense cloud). */
   private cloudVeil(x: number, y: number): number {
-    const e = Math.atan((this.horizon - y) / this.proj);
+    this.skyDir(x, y);
+    const e = this.dirEl;
     if (e <= 0.015) return 0;
     const dist = (CLOUD_HEIGHT / Math.tan(e)) * CLOUD_SCALE;
-    const n = cloudAt((this.colCos[x] ?? 0) * dist + (this.outdoor?.clouds ?? 0), (this.colSin[x] ?? 0) * dist);
+    const n = cloudAt(Math.cos(this.dirAz) * dist + (this.outdoor?.clouds ?? 0), Math.sin(this.dirAz) * dist);
     const night = Math.max(0, Math.min(1, (0.62 - (this.outdoor?.brightness ?? 1)) / 0.15));
     return smoothstep(0.5, 0.72, n) * 0.9 * smoothstep(0.015, 0.25, e) * (1 - 0.8 * adaptStep(ADAPT.clouds, this.nightAdapt) * night);
   }
@@ -1127,23 +1212,6 @@ export class Renderer {
       const at = y * VIEW_W + x;
       const c = this.frame[at] ?? 0;
       this.frame[at] = packRgb(Math.min(255, (c & 0xff) + r), Math.min(255, ((c >>> 8) & 0xff) + g), Math.min(255, ((c >>> 16) & 0xff) + b));
-    }
-  }
-
-  private skyAngle = NaN;
-
-  /** Direction of each column — once per frame. */
-  private skyColumns(cam: Camera): void {
-    this.skyAngle = cam.angle;
-    const turn = ((cam.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    for (let x = 0; x < VIEW_W; x++) {
-      const az = turn + Math.atan((x + 0.5 - VIEW_W / 2) / this.proj);
-      this.colAz[x] = az;
-      this.colCos[x] = Math.cos(az);
-      this.colSin[x] = Math.sin(az);
-      const hills = mountainsAt(az);
-      this.colFar[x] = hills.far;
-      this.colNear[x] = hills.near;
     }
   }
 
@@ -1175,7 +1243,7 @@ export class Renderer {
       }
       // Under open sky the top is sky: lighter near the horizon, darker higher up; mountains, clouds, sun, stars.
       if (sky && !below) {
-        this.skyRow(y, offset, sky, cam);
+        this.skyRow(y, sky);
         continue;
       }
       const height = below ? this.eye : 1 - this.eye;
